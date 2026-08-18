@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Marketing OS · Kitachi</title>
+<title>Kiều Foods · Kitachi Marketing Team</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -57,6 +57,8 @@
   <symbol id="p-web" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9.2"/><path d="M2.8 12h18.4"/><path d="M12 2.8a14.5 14.5 0 0 1 0 18.4 14.5 14.5 0 0 1 0-18.4z"/></symbol>
   <symbol id="i-tag" viewBox="0 0 24 24"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0l-7.2-7.2A2 2 0 0 1 2.8 12V4.8A2 2 0 0 1 4.8 2.8H12a2 2 0 0 1 1.4.6l7.2 7.2a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.4"/></symbol>
   <symbol id="i-truck" viewBox="0 0 24 24"><path d="M2 6.5h11v11H2zM13 10h4l3 3.5v4h-7z"/><circle cx="6" cy="18.5" r="1.8"/><circle cx="16.5" cy="18.5" r="1.8"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M13 5l7 7-7 7"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7"/></symbol>
   <symbol id="i-cam" viewBox="0 0 24 24"><path d="M22 8.6v6.8a1 1 0 0 1-1.5.87L16 13.5v-3l4.5-2.77A1 1 0 0 1 22 8.6z"/><rect x="2" y="6" width="14" height="12" rx="2.5"/><circle cx="9" cy="12" r="2.4"/></symbol>
   <symbol id="i-film" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 4v16M17 4v16M3 12h18M3 8h4M3 16h4M17 8h4M17 16h4"/></symbol>
   <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></symbol>
@@ -75,10 +77,10 @@
 <div id="login" class="login-wrap">
   <div class="lg-left">
     <div class="lg-logo">
-      <span class="lg-mark">M</span>
-      <span class="lg-name">Marketing OS</span>
+      <span class="lg-mark" id="loginMark">K</span>
+      <span class="lg-name">Kiều Foods</span>
     </div>
-    <h1 class="lg-h1">Hệ thống điều hành<br>Phòng Marketing</h1>
+    <h1 class="lg-h1">Hệ thống điều hành<br>Kitachi Marketing Team</h1>
     <span class="lg-badge">KITACHI · v2.0</span>
     <p class="lg-desc">Một chỗ để cả phòng cùng nhìn: ai đang làm gì, bài nào đang tắc,
       kênh nào hụt nhịp và tiền đang chảy đi đâu.</p>
@@ -96,14 +98,14 @@
       <div class="lg-f"><span class="lg-fi"><svg class="ic"><use href="#i-chart"/></svg></span>
         Bảng phân tích cho Leader · rà soát tự động</div>
     </div>
-    <div class="lg-foot">Mì Cay Kitachi · Quảng Ngãi</div>
+    <div class="lg-foot">Kiều Foods · Quảng Ngãi</div>
   </div>
 
   <div class="lg-right">
     <div class="login-card">
-      <div class="lg-cmark">M</div>
+      <div class="lg-cmark" id="loginCMark">K</div>
       <h2 class="lg-title">Đăng nhập hệ thống</h2>
-      <p class="lg-sub">Phòng Marketing · Kitachi</p>
+      <p class="lg-sub">Kitachi Marketing Team</p>
       <div id="loginErr" class="login-err"></div>
       <div class="lab">Bạn là ai</div>
       <div id="memberList" class="member-list"></div>
@@ -122,10 +124,11 @@
 
 <div id="app" class="shell hidden">
   <aside class="side" id="side">
-    <div class="side-brand">
-      <div class="mark">M</div>
-      <div><div class="mark-t">Marketing OS</div><div class="mark-s">Kitachi · phòng Marketing</div></div>
-    </div>
+    <button class="side-brand" id="brandHome" title="Về trang chủ">
+      <span class="mark" id="brandMark"><span>K</span></span>
+      <span><span class="mark-t">Kiều Foods</span>
+        <span class="mark-s">Kitachi Marketing Team</span></span>
+    </button>
     <nav class="side-nav" id="nav">
       <div class="side-lab">Hằng ngày</div>
       <button class="nav-i active" data-view="dash"><svg class="ic"><use href="#i-grid"/></svg><span>Trang chủ</span></button>
@@ -141,7 +144,7 @@
       <button class="nav-i" data-view="d-film"><svg class="ic"><use href="#i-cam"/></svg><span>Quay Video</span><i class="nav-b" id="bfilm"></i></button>
 
       <div class="side-lab">Nội dung &amp; kênh</div>
-      <button class="nav-i" data-view="cal"><svg class="ic"><use href="#i-cal"/></svg><span>Lịch đăng</span></button>
+      <button class="nav-i" data-view="cal"><svg class="ic"><use href="#i-cal"/></svg><span>Lịch đăng &amp; quay</span></button>
       <button class="nav-i" data-view="channels"><svg class="ic"><use href="#i-signal"/></svg><span>Kênh &amp; chỉ số</span></button>
 
       <div class="side-lab">Dự án</div>
@@ -190,6 +193,7 @@
       <div class="search"><svg class="ic"><use href="#i-search"/></svg>
         <input id="q" type="text" placeholder="Tìm công việc, bài đăng…"></div>
       <div class="top-r">
+        <span class="livechip" id="liveChip"><svg class="ic"><use href="#i-loop"/></svg>Vừa cập nhật</span>
         <div class="themetog" id="themeTog">
           <button data-theme="light" title="Nền sáng"><svg class="ic"><use href="#i-sun"/></svg></button>
           <button data-theme="dark" title="Nền tối"><svg class="ic"><use href="#i-moon"/></svg></button>
