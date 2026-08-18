@@ -75,6 +75,8 @@ const FLOW = [
    hint:'Leader xem nội dung trước khi cho làm thiết kế'},
   {s:'Cần sửa nội dung',    ic:'✂️', hold:'writer', cls:'s-red',
    hint:'Leader trả lại, Content sửa nội dung'},
+  {s:'Đang quay',           ic:'🎬', hold:'film',   cls:'s-teal',
+   hint:'Quay footage thô tại quán, xong bàn giao cho Editor dựng'},
   {s:'Đang thiết kế',       ic:'🎨', hold:'design', cls:'s-pink',
    hint:'Vỹ và Thảo tự chia nhau làm ấn phẩm'},
   {s:'Chờ duyệt ấn phẩm',   ic:'👀', hold:'leader', cls:'s-blue',
@@ -220,15 +222,20 @@ const DESKS = {
     desc:'Ảnh, poster, infographic, ấn phẩm in',kind:'design'},
   edit:{key:'edit',name:'Editor Video',ic:'i-film',
     desc:'Dựng video, cắt clip, hậu kỳ',kind:'design'},
+  film:{key:'film',name:'Quay Video',ic:'i-cam',
+    desc:'Quay footage tại quán, bàn giao Editor dựng',kind:'film'},
 };
 const deskOwner = k => (MEMBERS.find(m=>m.desk===k)||{}).name;
 function deskPosts(k){
   const d=DESKS[k]; if(!d) return [];
+  if(d.kind==='film') return POSTS.filter(p=>p.filmer===deskOwner('film')
+    || (norm(p.status)==='Đang quay')
+    || (p.need_film&&!DONE.includes(p.status)));
   if(d.kind==='content') return POSTS.filter(p=>(p.stream||'social')===k);
   return POSTS.filter(p=>p.editor===deskOwner(k));
 }
 
-let ME=null, MEMBERS=[], POSTS=[], CHANNELS=[], TASKS=[], ALL_POSTS=[], ALL_TASKS=[], PROJECTS=[], SPRINTS=[],
+let ME=null, MEMBERS=[], POSTS=[], CHANNELS=[], STATS=[], PROMOS=[], TASKS=[], ALL_POSTS=[], ALL_TASKS=[], PROJECTS=[], SPRINTS=[],
     BUDGET=[], RISKS=[], DOCS=[], MEETS=[], ADS=[], REPORTS=[], APPROVALS=[], KUDOS=[], DUTY=[],
     PERMS=[], ROLES=[], SET={},
     VIEW='dash', PICKED=null, QUERY='', PROJ=0, CAL=new Date(), DAY=null,
@@ -266,6 +273,13 @@ const money = n => nf(n)+' đ';
 const mshort = n => { n=Number(n||0);
   return n>=1e9 ? (n/1e9).toFixed(1).replace('.0','')+' tỷ'
        : n>=1e6 ? Math.round(n/1e6)+' tr' : nf(n); };
+function shade(hex,p){
+  const h=hex.replace('#','');
+  const n=parseInt(h.length===3?h.split('').map(x=>x+x).join(''):h,16);
+  const f=v=>Math.max(0,Math.min(255,Math.round(v+v*p/100)));
+  return '#'+[(n>>16)&255,(n>>8)&255,n&255].map(f)
+    .map(v=>v.toString(16).padStart(2,'0')).join('');
+}
 const kf = n => n>=1000 ? (n/1000).toFixed(n>=10000?0:1).replace('.0','')+'K' : nf(n);
 const iso = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 function avat(n){
@@ -280,6 +294,7 @@ const whoCell = n => n ? `<span class="who">${avat(n)}<span>${esc(n)}</span></sp
 function holder(p){
   const h=F(p.status).hold;
   if(h==='writer') return p.writer;
+  if(h==='film')   return p.filmer || deskOwner('film') || p.writer;
   if(h==='design') return (p.editor && p.editor!=='Không cần') ? p.editor : p.writer;
   if(h==='leader') return (MEMBERS.find(m=>m.kind==='leader')||{}).name;
   return null;
@@ -363,11 +378,27 @@ async function boot(){
 }
 document.getElementById('loginBtn').onclick=doLogin;
 document.getElementById('pin').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
+document.getElementById('pin').addEventListener('input',()=>{
+  const err=document.getElementById('loginErr'); err.textContent=''; err.classList.remove('on');
+  const v=document.getElementById('pin').value;
+  const m=MEMBERS.find(x=>x.name===PICKED);
+  if(m&&v.length>=4&&v===m.pin) doLogin();
+});
+document.getElementById('pinEye').onclick=()=>{
+  const p=document.getElementById('pin');
+  p.type = p.type==='password'?'text':'password';
+  document.getElementById('pinEye').classList.toggle('on',p.type==='text');
+  p.focus();
+};
 function doLogin(){
   const err=document.getElementById('loginErr');
+  err.classList.add('on');
   if(!PICKED){err.textContent='Chọn tên của bạn trước nhé';return;}
   const m=MEMBERS.find(x=>x.name===PICKED);
-  if(document.getElementById('pin').value!==m.pin){err.textContent='Mã PIN chưa đúng';return;}
+  if(document.getElementById('pin').value!==m.pin){
+    err.textContent='Mã PIN chưa đúng — thử lại nhé';
+    document.getElementById('pin').select(); return;}
+  err.classList.remove('on');
   localStorage.setItem('mktos_me',PICKED); enter(PICKED);
 }
 async function enter(name){
@@ -389,16 +420,17 @@ document.getElementById('logout').onclick=()=>{localStorage.removeItem('mktos_me
 /* ─── Nạp dữ liệu ─── */
 async function loadAll(){
   const t = n => sb.from(n).select('*');
-  const [p,c,tk,pr,sp,bg,rk,dc,mt,st,ad,rp,ap,ku,dt,pm,rl] = await Promise.all([
+  const [p,c,tk,pr,sp,bg,rk,dc,mt,st,ad,rp,ap,ku,dt,pm,rl,cs,pz] = await Promise.all([
     sb.from('posts').select('*').order('pub_date'), t('channels'),
     sb.from('tasks').select('*').order('due'), t('projects'), t('sprints'),
     t('budget'), t('risks'), t('docs'), sb.from('meetings').select('*').order('date'), t('settings'),
     t('ads'), sb.from('reports').select('*').order('date'), t('approvals'), t('kudos'),
-    sb.from('duty').select('*').order('date'), t('perms'), t('roles')
+    sb.from('duty').select('*').order('date'), t('perms'), t('roles'),
+    sb.from('channel_stats').select('*').order('date'), t('promos')
   ]);
   ALL_POSTS=p.data||[]; ALL_TASKS=tk.data||[];
   POSTS=ALL_POSTS.filter(x=>!x.archived); TASKS=ALL_TASKS.filter(x=>!x.archived);
-  CHANNELS=c.data||[]; PROJECTS=pr.data||[];
+  CHANNELS=c.data||[]; PROJECTS=pr.data||[]; STATS=cs.data||[]; PROMOS=pz.data||[];
   SPRINTS=sp.data||[]; BUDGET=bg.data||[]; RISKS=rk.data||[]; DOCS=dc.data||[];
   MEETS=mt.data||[]; ADS=ad.data||[]; REPORTS=rp.data||[]; APPROVALS=ap.data||[];
   KUDOS=ku.data||[]; DUTY=dt.data||[]; PERMS=pm.data||[]; ROLES=rl.data||[];
@@ -447,7 +479,7 @@ async function loadAll(){
 function go(v){
   if(!seeMenu(v)){ toast('Bạn không có quyền xem mục này'); return; }
   if(v==='desk'){ const k=(MEMBERS.find(x=>x.name===ME.name)||{}).desk;
-    v = (k==='design'||k==='edit') ? 'd-'+k : 'work'; }
+    v = (k==='design'||k==='edit'||k==='film') ? 'd-'+k : 'work'; }
   VIEW=v;
   document.querySelectorAll('.nav-i,.bn').forEach(b=>b.classList.toggle('active',b.dataset.view===v));
   closeSide(); window.scrollTo(0,0); render();
@@ -471,9 +503,16 @@ document.getElementById('sideBg').onclick=closeSide;
 /* ─── Mảnh dựng dùng chung ─── */
 const ph=(t,s,right)=>`<div class="ph"><div><h2>${esc(t)}</h2><p>${esc(s)}</p></div>
   ${right||''}</div>`;
-const bigKpi=(cls,lbl,val,foot)=>`<div class="bkpi b-${cls}">
-  <div class="bk-l">${esc(lbl)}</div><div class="bk-v">${val}</div>
-  <div class="bk-f">${esc(foot||'')}</div></div>`;
+const bigKpi=(cls,lbl,val,foot,click,ic)=>{
+  const tag=click?'button':'div';
+  return `<${tag} class="bkpi b-${cls}${click?' clickable':''}"${click?` data-bkpi="${click}"`:''}>
+    ${ic?`<span class="bk-ic">${icon(ic)}</span>`:''}
+    <span class="bk-m">
+      <span class="bk-l">${esc(lbl)}</span>
+      <span class="bk-v">${val}</span>
+      <span class="bk-f">${esc(foot||'')}${click?'<i class="bk-go">Xem chi tiết →</i>':''}</span>
+    </span></${tag}>`;
+};
 const kpi=(cls,ic,lbl,val,foot,pct)=>`<div class="kpi">
   <div class="kpi-t"><div class="kpi-ic t-${cls}">${icon(ic)}</div>
     <div><div class="lbl">${lbl}</div><div class="val v-${cls}">${val}</div></div></div>
@@ -526,7 +565,7 @@ function render(){
     reports:viewReports,activity:viewActivity,archive:viewArchive,setup:viewSetup,
     approvals:viewApprovals,perf:viewPerf,kudos:viewKudos,duty:viewDuty,
     org:viewOrg,roles:viewRoles,
-    work:viewWork,ads:viewAds,assign:viewAssign,admin:viewAdmin,leader:viewLeader}[VIEW];
+    work:viewWork,ads:viewAds,assign:viewAssign,admin:viewAdmin,leader:viewLeader,promo:viewPromo}[VIEW];
   m.innerHTML = V?V():'';
   if(VIEW==='activity') loadLog();
   if(VIEW==='roles') bindRoles();
@@ -537,6 +576,135 @@ function render(){
 /* ─── Thanh chọn ngày ─── */
 /* ═════════ TỔNG HỢP — bố cục portal ═════════ */
 const CHCOL = ['#6D4AFF','#12855A','#1F63C7','#D9772B','#0E7490','#B83280','#7A3EC7','#C0392B','#2E7D32','#5B6ABF'];
+
+
+
+/* Biểu tượng nhận diện từng nền tảng */
+const PICON={'TikTok':'p-tiktok','Facebook':'p-facebook','Instagram':'p-instagram',
+  'YouTube':'p-youtube','Shopee':'p-shopee','ShopeeFood':'p-shopee','GrabFood':'p-shopee',
+  'Zalo':'p-zalo','Zalo OA':'p-zalo','Google Maps':'p-maps','Website':'p-web'};
+const picon=p=>PICON[p]||'p-web';
+
+/* ═══════════ SỐ LIỆU KÊNH ═══════════ */
+const CKIND={
+  social:{t:'Mạng xã hội',ic:'i-share',
+    f:[['followers','Người theo dõi','n'],['views','Lượt xem','n'],['reach','Lượt tiếp cận','n'],
+       ['eng','Tương tác','n'],['comments','Bình luận','n'],['shares','Chia sẻ','n'],
+       ['saves','Lượt lưu','n'],['clicks','Nhấp vào link','n']]},
+  sales:{t:'Kênh bán hàng',ic:'i-money',
+    f:[['orders','Số đơn bán ra','n'],['revenue','Doanh thu','m'],
+       ['clicks','Lượt xem gian hàng','n'],['rating','Điểm đánh giá','r']]},
+  web:{t:'Website / Bản đồ',ic:'i-signal',
+    f:[['views','Lượt truy cập','n'],['clicks','Lượt nhấp','n'],
+       ['comments','Đánh giá / bình luận','n'],['rating','Điểm đánh giá','r']]},
+};
+const ckindOf=c=>c.ckind||'social';
+/* Số liệu kỳ gần nhất của một kênh */
+function lastStat(cid){
+  const l=STATS.filter(x=>x.channel_id===cid).sort((a,b)=>b.date.localeCompare(a.date));
+  return l[0]||null;
+}
+function prevStat(cid){
+  const l=STATS.filter(x=>x.channel_id===cid).sort((a,b)=>b.date.localeCompare(a.date));
+  return l[1]||null;
+}
+/* Chuỗi giá trị theo kỳ, cũ → mới */
+const statSeries=(cid,key,n)=>STATS.filter(x=>x.channel_id===cid)
+  .sort((a,b)=>a.date.localeCompare(b.date)).slice(-(n||8)).map(x=>+(x[key]||0));
+
+const fmtStat=(v,type)=>{
+  if(v===null||v===undefined||v==='') return '—';
+  if(type==='m') return mshort(v);
+  if(type==='r') return (+v).toFixed(1)+'★';
+  return kf(v);
+};
+
+/* ─── Form nhập số liệu cho một kênh ─── */
+function capNhatSoLieu(cid){
+  const c=CHANNELS.find(x=>x.id===cid)||CHANNELS[0];
+  const K=CKIND[ckindOf(c)];
+  const last=lastStat(c.id);
+  const td=iso(D0());
+  openDrawer(`<div class="dr-code">${esc(K.t)}</div>
+    <div class="dr-title">Cập nhật số liệu</div>
+    <div class="dr-meta">Nhập số lấy từ trang quản trị của kênh.
+      Mỗi lần nhập là một mốc, hệ thống tự vẽ biểu đồ tăng trưởng.</div>
+    ${c.admin_link?`<a class="chlink adm" href="${esc(c.admin_link)}" target="_blank" rel="noopener"
+      style="margin-top:12px">${icon('i-ext')}<span><b>Mở trang quản trị ${esc(c.platform)}</b>
+      <small>lấy số ở đó rồi quay lại điền</small></span></a>`:''}
+
+    <div class="dr-lab">Kênh</div>
+    <select id="stCh" class="fld">${CHANNELS.map(x=>
+      `<option value="${x.id}" ${x.id===c.id?'selected':''}>${esc(x.name)} · ${esc(x.platform)}</option>`).join('')}</select>
+
+    <div class="two"><div><div class="dr-lab">Ngày chốt số</div>
+      <input type="date" id="stDate" class="fld" value="${td}"></div>
+      <div><div class="dr-lab">Kỳ</div><select id="stPeriod" class="fld">
+        <option>tuần</option><option>tháng</option><option>ngày</option></select></div></div>
+
+    ${last?`<div class="lastnote">${icon('i-clock')}
+      <span>Lần nhập gần nhất: <b>${fdate(last.date)}</b> —
+      ${K.f.slice(0,3).map(([k,lb,tp])=>`${lb} ${fmtStat(last[k],tp)}`).join(' · ')}</span></div>`:''}
+
+    <div class="dr-lab">Chỉ số ${esc(K.t.toLowerCase())}</div>
+    <div class="statgrid">${K.f.map(([k,lb,tp])=>`
+      <div class="stf"><label>${esc(lb)}${tp==='m'?' (đ)':tp==='r'?' (0–5)':''}</label>
+        <input type="number" id="st_${k}" class="fld" ${tp==='r'?'step="0.1" max="5"':''}
+          placeholder="${last&&last[k]!=null?last[k]:'0'}" value="">
+        ${last&&last[k]!=null?`<small>kỳ trước: ${fmtStat(last[k],tp)}</small>`:''}
+      </div>`).join('')}</div>
+
+    <div class="dr-lab">Ghi chú</div>
+    <textarea id="stNote" placeholder="Ví dụ: tuần này chạy quảng cáo nên lượt xem tăng mạnh"></textarea>
+    <button class="btn btn-pri btn-full" id="stSave">${icon('i-check')}Lưu số liệu</button>
+    <div class="permhint" style="margin-top:12px">${icon('i-alert')}
+      <span>Bỏ trống ô nào thì ô đó không được ghi. Chỉ nhập những chỉ số bạn có số thật.</span></div>`);
+
+  document.getElementById('stCh').onchange=()=>capNhatSoLieu(+V('stCh'));
+  document.getElementById('stSave').onclick=async()=>{
+    const row={channel_id:+V('stCh'),date:V('stDate')||td,period:V('stPeriod'),
+      note:document.getElementById('stNote').value||null};
+    let co=0;
+    CKIND[ckindOf(CHANNELS.find(x=>x.id===+V('stCh')))].f.forEach(([k])=>{
+      const el=document.getElementById('st_'+k);
+      if(el&&el.value!==''){ row[k]=+el.value; co++; }
+    });
+    if(!co){toast('Nhập ít nhất một chỉ số');return;}
+    /* cùng kênh cùng ngày thì ghi đè */
+    const cu=STATS.find(x=>x.channel_id===row.channel_id&&x.date===row.date);
+    if(cu) await sb.from('channel_stats').update(row).eq('id',cu.id);
+    else   await sb.from('channel_stats').insert(row);
+    /* đồng bộ người theo dõi lên thẻ kênh */
+    if(row.followers) await sb.from('channels').update({followers:row.followers}).eq('id',row.channel_id);
+    toast('Đã lưu số liệu '+(cu?'(ghi đè kỳ cũ)':'')); closeDrawer(); await loadAll();
+  };
+}
+
+/* ─── Bảng lịch sử số liệu một kênh ─── */
+function lichSuSoLieu(cid){
+  const c=CHANNELS.find(x=>x.id===cid); if(!c) return '';
+  const K=CKIND[ckindOf(c)];
+  const rows=STATS.filter(x=>x.channel_id===cid).sort((a,b)=>b.date.localeCompare(a.date));
+  if(!rows.length) return `<div class="empty">${icon('i-chart')}<br><br>
+    Chưa có số liệu nào cho kênh này.<br>
+    <span style="font-size:11.5px">Bấm “Cập nhật số liệu” để nhập mốc đầu tiên.</span></div>`;
+  return `<div class="tbl-wrap"><table class="tbl"><thead><tr>
+    <th>Ngày chốt</th><th>Kỳ</th>
+    ${K.f.map(([,lb])=>`<th>${esc(lb)}</th>`).join('')}
+    <th style="min-width:150px">Ghi chú</th><th></th></tr></thead><tbody>
+    ${rows.map((r,i)=>{
+      const pv=rows[i+1];
+      return `<tr>
+        <td class="tt">${fdate(r.date)}</td>
+        <td><span class="pill pill-s s-gray">${esc(r.period||'tuần')}</span></td>
+        ${K.f.map(([k,,tp])=>{
+          const d=pv&&pv[k]!=null&&r[k]!=null?r[k]-pv[k]:null;
+          return `<td>${fmtStat(r[k],tp)}${d?`<i class="tdl ${d>0?'up':'down'}">${
+            d>0?'▲':'▼'}${fmtStat(Math.abs(d),tp)}</i>`:''}</td>`;}).join('')}
+        <td><small style="color:var(--ink3)">${esc(r.note||'')}</small></td>
+        <td><button class="btn btn-gh btn-sm" data-stdel="${r.id}">Xoá</button></td></tr>`;}).join('')}
+  </tbody></table></div>`;
+}
 
 /* ═══════════ BỘ VẼ BIỂU ĐỒ ═══════════ */
 
@@ -681,22 +849,95 @@ function viewDash(){
   ].sort((a,b)=>(a.t<b.t?-1:1)).slice(0,3);
 
   /* ── Thẻ kênh ── */
+  const D7c=[]; for(let i=6;i>=0;i--){const d=new Date(D0());d.setDate(d.getDate()-i);D7c.push(iso(d));}
   const chcards=CHANNELS.map((c,i)=>{
     const all=POSTS.filter(p=>p.channel===c.name);
+    const posted=all.filter(x=>x.status==='Đã đăng');
+    const open2=all.filter(x=>!DONE.includes(x.status));
     const n=all.filter(p=>p.pub_date&&new Date(p.pub_date)>=wk).length;
-    const t=c.target_week||0, p=t?Math.min(100,Math.round(n/t*100)):0;
-    const v=all.filter(x=>x.status==='Đã đăng').reduce((s,x)=>s+(x.views||0),0);
-    const own=(c.stream==='tiktok')?deskOwner('tiktok'):deskOwner('social');
-    return `<div class="chcard" data-chan="${c.id}" style="background:${CHCOL[i%CHCOL.length]}">
-      <div class="chcard-h"><span><b>${esc(c.name)}</b>
-        <small>${esc(c.platform)} · ${esc(own||'')}</small></span>
-        ${icon(c.stream==='tiktok'?'i-video':'i-share')}</div>
-      <div class="chcard-p"><div class="pl"><span>Nhịp tuần này</span><span>${n}/${t} bài</span></div>
-        <div class="chcard-bar"><i style="width:${p}%"></i></div></div>
-      <div class="chcard-f">
-        <div>Đang chạy<b>${all.filter(x=>!DONE.includes(x.status)).length}</b></div>
-        <div>Đã đăng<b>${all.filter(x=>x.status==='Đã đăng').length}</b></div>
-        <div>Lượt xem<b>${kf(v)}</b></div></div></div>`;
+    const t=c.target_week||0, pc=t?Math.min(100,Math.round(n/t*100)):0;
+    const v=posted.reduce((s,x)=>s+(x.views||0),0);
+    const e=posted.reduce((s,x)=>s+(x.eng||0),0);
+    const er=v?(e/v*100):0;
+    const lateN=open2.filter(latePost).length;
+    /* bài gần nhất và bài sắp tới */
+    const last=posted.filter(p=>p.pub_date).sort((x,y)=>y.pub_date.localeCompare(x.pub_date))[0];
+    const next=open2.filter(p=>p.pub_date&&dd(p.pub_date)>=0)
+      .sort((x,y)=>x.pub_date.localeCompare(y.pub_date))[0];
+    const kd0=ckindOf(c);
+    const key0=kd0==='sales'?'revenue':'views';
+    const ser=statSeries(c.id,key0,8);
+    const sp=ser.some(x=>x)?ser
+      :D7c.map(k=>ALL_POSTS.filter(p=>p.channel===c.name&&p.pub_date===k&&p.status==='Đã đăng').length);
+    const gr=Array.isArray(c.growth)&&c.growth.length
+      ? c.growth[c.growth.length-1]-c.growth[c.growth.length-2] : null;
+    return `<button class="chcard2 ${lateN?'risk':pc>=100?'good':''}" data-chan="${c.id}">
+      <span class="c2-top" style="background:linear-gradient(145deg,${
+        CHCOL[i%CHCOL.length]},${shade(CHCOL[i%CHCOL.length],-16)})">
+        <span class="c2-h">
+          <span class="c2-nm"><b>${esc(c.name)}</b>
+            <small>${esc(c.platform)} · ${esc(CKIND[ckindOf(c)].t)}</small></span>
+          ${c.link
+            ? `<span class="c2-go" data-open="${esc(c.link)}" title="Mở ${esc(c.name)} trên ${esc(c.platform)}">
+                ${icon(picon(c.platform))}</span>`
+            : `<span class="c2-go off" title="${esc(c.platform)} — chưa có link">
+                ${icon(picon(c.platform))}</span>`}</span>
+        <span class="c2-fol">${(()=>{
+          const kd=ckindOf(c), st=lastStat(c.id), pv=prevStat(c.id);
+          if(kd==='sales'){
+            const d=st&&pv&&pv.revenue?Math.round((st.revenue-pv.revenue)/pv.revenue*100):null;
+            return `<b>${st&&st.revenue!=null?mshort(st.revenue):'chưa có số'}</b> doanh thu kỳ này
+              ${d?`<i class="c2-gr ${d>=0?'up':'down'}">${d>=0?'▲':'▼'} ${Math.abs(d)}%</i>`:''}`;}
+          if(kd==='web'){
+            const d=st&&pv&&pv.views?Math.round((st.views-pv.views)/pv.views*100):null;
+            return `<b>${st&&st.views!=null?kf(st.views):'chưa có số'}</b> lượt truy cập
+              ${d?`<i class="c2-gr ${d>=0?'up':'down'}">${d>=0?'▲':'▼'} ${Math.abs(d)}%</i>`:''}`;}
+          const f=st&&st.followers!=null?st.followers:(c.followers||0);
+          const d=st&&pv&&pv.followers?Math.round((f-pv.followers)/pv.followers*100):null;
+          return `<b>${kf(f)}</b> người theo dõi
+            ${d?`<i class="c2-gr ${d>=0?'up':'down'}">${d>=0?'▲':'▼'} ${Math.abs(d)}%</i>`
+              :(gr!==null?`<i class="c2-gr ${gr>=0?'up':'down'}">${gr>=0?'▲':'▼'} ${Math.abs(gr)}%</i>`:'')}`;
+        })()}</span>
+      </span>
+      <span class="c2-body">
+        <span class="c2-row">
+          <span class="c2-lbl">Nhịp tuần này</span>
+          <span class="c2-val ${n>=t?'ok':n>=t/2?'warn':'bad'}">${n}/${t} bài</span></span>
+        <span class="c2-bar"><i class="${pc>=100?'ok':pc>=50?'':'warn'}" style="width:${pc}%"></i></span>
+        <span class="c2-spark">${spark(sp,pc>=100?'#12855A':'#6D4AFF')}</span>
+        <span class="c2-mtr">${(()=>{
+          const kd=ckindOf(c), st=lastStat(c.id), pv=prevStat(c.id);
+          const dl=(k)=>{ if(!st||!pv||st[k]==null||pv[k]==null||!pv[k]) return '';
+            const p=Math.round((st[k]-pv[k])/pv[k]*100);
+            if(!p) return ''; return `<em class="c2-d ${p>0?'up':'down'}">${p>0?'▲':'▼'}${Math.abs(p)}%</em>`;};
+          if(kd==='sales') return `
+            <span><i>Đơn bán ra</i><b>${st&&st.orders!=null?kf(st.orders):'—'}${dl('orders')}</b></span>
+            <span><i>Doanh thu</i><b>${st&&st.revenue!=null?mshort(st.revenue):'—'}${dl('revenue')}</b></span>
+            <span><i>Đánh giá</i><b>${st&&st.rating!=null?st.rating+'★':'—'}</b></span>`;
+          if(kd==='web') return `
+            <span><i>Truy cập</i><b>${st&&st.views!=null?kf(st.views):kf(v)}${dl('views')}</b></span>
+            <span><i>Lượt nhấp</i><b>${st&&st.clicks!=null?kf(st.clicks):'—'}</b></span>
+            <span><i>Đánh giá</i><b>${st&&st.rating!=null?st.rating+'★':'—'}</b></span>`;
+          const V2=st&&st.views!=null?st.views:v, E2=st&&st.eng!=null?st.eng:e;
+          const R2=V2?E2/V2*100:0;
+          return `
+            <span><i>Lượt xem</i><b>${kf(V2)}${dl('views')}</b></span>
+            <span><i>Tương tác</i><b>${kf(E2)}${dl('eng')}</b></span>
+            <span><i>Tỉ lệ TT</i><b class="${R2>=5?'good':''}">${R2?R2.toFixed(1)+'%':'—'}</b></span>`;
+        })()}</span>
+        <span class="c2-ppl">
+          <span class="c2-p">${avat(c.owner_content||'?')}${esc(c.owner_content||'chưa giao')}</span>
+          ${c.owner_design?`<span class="c2-ar">→</span>
+            <span class="c2-p">${avat(c.owner_design)}${esc(c.owner_design)}</span>`:''}
+        </span>
+        <span class="c2-foot">
+          ${open2.length?`<span class="c2-tag">${open2.length} đang chạy</span>`:''}
+          ${lateN?`<span class="c2-tag red">${lateN} trễ</span>`:''}
+          ${next?`<span class="c2-tag pri">tiếp: ${fdate(next.pub_date)}</span>`
+            :last?`<span class="c2-tag mute">gần nhất ${fdate(last.pub_date)}</span>`
+            :'<span class="c2-tag mute">chưa có bài</span>'}
+        </span>
+      </span></button>`;
   }).join('');
 
   /* ── Thông báo bên phải ── */
@@ -759,10 +1000,10 @@ function viewDash(){
 
   ${dayBar()}
   <div class="kpis4">
-    ${bigKpi('green','Dự án đang triển khai',PROJECTS.filter(p=>p.status==='Đang chạy').length,'Toàn hệ thống')}
-    ${bigKpi('amber','Công việc cần xử lý',mine.length,'Đang nằm ở tay bạn')}
-    ${bigKpi('blue','Đến hạn hôm nay',act.filter(t=>isToday(t.due)).length+openP.filter(p=>isToday(p.pub_date)).length,'Toàn hệ thống')}
-    ${bigKpi('red','Công việc quá hạn',urgent,'Toàn hệ thống')}
+    ${bigKpi('green','Dự án đang triển khai',PROJECTS.filter(p=>p.status==='Đang chạy').length,'Toàn hệ thống','projects','i-folder')}
+    ${bigKpi('amber','Công việc cần xử lý',mine.length,'Đang nằm ở tay bạn','mine','i-hand')}
+    ${bigKpi('blue','Đến hạn hôm nay',act.filter(t=>isToday(t.due)).length+openP.filter(p=>isToday(p.pub_date)).length,'Toàn hệ thống','today','i-clock')}
+    ${bigKpi('red','Công việc quá hạn',urgent,'Toàn hệ thống','late','i-alert')}
   </div>
 
   ${(latePs.length||lateT.length)?`<div class="notice">
@@ -775,7 +1016,7 @@ function viewDash(){
   <div class="panel-h" style="background:none;border:0;padding:2px 2px 9px">
     <b style="font-size:14.5px">${icon('i-signal')} Hệ thống kênh</b>
     <small>${CHANNELS.length} kênh · bấm để xem hồ sơ và toàn bộ bài</small></div>
-  <div class="chstrip" style="margin-bottom:16px">${chcards}</div>
+  <div class="chgrid2">${chcards}</div>
 
   <div class="g3col">
     <div>
@@ -1268,7 +1509,11 @@ function chBar(){
     const cls=t===0?'':(n>=t?'ok':'warn');
     const own=(c.stream==='tiktok')?deskOwner('tiktok'):deskOwner('social');
     return `<button class="chpill ${cls} ${CHFIL===c.id?'on':''}" data-chfil="${c.id}">
-      <span class="cd" style="background:${CHCOL[i%CHCOL.length]}"></span>
+      ${c.link
+        ? `<a class="chopen pl-${esc(c.platform.toLowerCase().replace(/[^a-z]/g,''))}"
+            href="${esc(c.link)}" target="_blank" rel="noopener"
+            title="Mở ${esc(c.name)}" onclick="event.stopPropagation()">${icon(picon(c.platform))}</a>`
+        : `<span class="chopen off">${icon(picon(c.platform))}</span>`}
       <span><b>${esc(c.name)}</b><small style="display:block">${esc(own||'')} · ${n}/${t} tuần</small></span>
       <span class="cn">${open}</span></button>`;}).join('');
   return `<div class="chbar">
@@ -1337,9 +1582,95 @@ function viewCal(){
 let CHTAB='list';
 const chTabs=()=>`<div class="tabs">
   <button data-chtab="list" class="${CHTAB==='list'?'on':''}">${icon('i-signal')}Danh sách kênh</button>
-  <button data-chtab="metric" class="${CHTAB==='metric'?'on':''}">${icon('i-chart')}Chỉ số hiệu quả</button></div>`;
+  <button data-chtab="metric" class="${CHTAB==='metric'?'on':''}">${icon('i-chart')}Chỉ số hiệu quả</button>
+  <button data-chtab="input" class="${CHTAB==='input'?'on':''}">${icon('i-pen')}Cập nhật số liệu</button></div>`;
+
+/* ─── Màn cập nhật số liệu ─── */
+let SCH=0;
+function viewStatInput(){
+  const cur=SCH?CHANNELS.find(c=>c.id===SCH):null;
+  const nhom={social:[],sales:[],web:[]};
+  CHANNELS.forEach(c=>nhom[ckindOf(c)].push(c));
+  const td=iso(D0());
+  const wkAgo=new Date(D0()); wkAgo.setDate(wkAgo.getDate()-9);
+
+  const card=c=>{
+    const st=lastStat(c.id), pv=prevStat(c.id);
+    const K=CKIND[ckindOf(c)];
+    const cu=st?Math.round((D0()-new Date(st.date))/864e5):null;
+    const oldData=cu===null||cu>9;
+    return `<button class="sc ${SCH===c.id?'on':''} ${oldData?'stale':''}" data-sch="${c.id}">
+      <span class="sc-h"><b>${esc(c.name)}</b>
+        <span class="sc-k">${esc(c.platform)}</span></span>
+      <span class="sc-m">${K.f.slice(0,2).map(([k,lb,tp])=>{
+        const d=st&&pv&&pv[k]&&st[k]!=null?Math.round((st[k]-pv[k])/pv[k]*100):null;
+        return `<span><i>${esc(lb)}</i><b>${st?fmtStat(st[k],tp):'—'}</b>
+          ${d?`<em class="${d>0?'up':'down'}">${d>0?'▲':'▼'}${Math.abs(d)}%</em>`:''}</span>`;}).join('')}
+      </span>
+      <span class="sc-f ${oldData?'warn':''}">${cu===null?'chưa có số liệu'
+        :cu===0?'cập nhật hôm nay':`cập nhật ${cu} ngày trước`}</span></button>`;};
+
+  const canCapNhat=CHANNELS.filter(c=>{const st=lastStat(c.id);
+    return !st||new Date(st.date)<wkAgo;});
+
+  return ph('Kênh & chỉ số','Nhập số lấy từ trang quản trị của từng kênh — tuần một lần là đủ',
+    `<button class="btn btn-pri btn-sm" id="scNew">${icon('i-plus')}Nhập số liệu</button>`)
+  + chTabs() + `
+  <div class="statbar">
+    ${[['i-signal','pri','Tổng số kênh',CHANNELS.length],
+       ['i-share','blue','Mạng xã hội',nhom.social.length],
+       ['i-money','green','Kênh bán hàng',nhom.sales.length],
+       ['i-chart','gray','Mốc số liệu đã lưu',STATS.length],
+       ['i-chart',baiCanDo().length?'amber':'green','Bài cần nhập số',baiCanDo().length]]
+      .map(([ic,c,t,n])=>`<div class="stat s-${c} ${n?'':'zero'}">
+        <span class="stat-i">${icon(ic)}</span><span class="stat-v">${n}</span>
+        <span class="stat-t">${t}</span></div>`).join('')}
+  </div>
+
+  ${canCapNhat.length?`<div class="notice">
+    <span class="ni">${icon('i-clock')}</span>
+    <span><b>${canCapNhat.length} kênh chưa cập nhật số liệu trong 9 ngày</b>
+      <p>${canCapNhat.slice(0,5).map(c=>esc(c.name)).join(', ')}${
+        canCapNhat.length>5?` và ${canCapNhat.length-5} kênh khác`:''}.
+      Số liệu cũ làm biểu đồ tăng trưởng sai lệch.</p></span></div>`:''}
+
+  ${(()=>{const bd=baiCanDo(); if(!bd.length) return '';
+    return `<div class="panel"><div class="panel-h">
+      <b>${icon('i-chart')} Bài đã đăng cần nhập chỉ số</b>
+      <small>${bd.length} bài · nên đo sau 24–48 giờ</small></div>
+      <div>${bd.slice(0,8).map(p=>{
+        const tuoi=Math.abs(dd(p.pub_date));
+        const cach=p.measured_at?Math.abs(dd(p.measured_at)):null;
+        return `<div class="mrow">
+          <span class="mr-t" data-post="${p.id}"><b>${esc(p.title)}</b>
+            <small>${esc(p.channel||'')} · đăng ${tuoi} ngày trước
+              ${cach!==null?` · đo lần cuối ${cach} ngày trước`:' · chưa đo lần nào'}</small></span>
+          <span class="mr-v">${p.views!=null?kf(p.views)+' lượt xem':'<i>chưa có số</i>'}</span>
+          <button class="todo-b" data-metric="${p.id}">${p.measured_at?'Đo lại':'Nhập số'}</button>
+        </div>`;}).join('')}
+        ${bd.length>8?`<div class="qrow"><span class="qt" style="color:var(--ink3)">
+          và ${bd.length-8} bài nữa — xem đủ trong mục Lịch đăng</span></div>`:''}
+      </div></div>`;})()}
+  ${Object.entries(nhom).filter(([,l])=>l.length).map(([k,l])=>`
+    <div class="panel"><div class="panel-h">
+      <b>${icon(CKIND[k].ic)} ${esc(CKIND[k].t)}</b>
+      <small>${l.length} kênh · theo dõi ${CKIND[k].f.slice(0,3).map(f=>f[1].toLowerCase()).join(', ')}</small></div>
+      <div class="panel-b"><div class="scgrid">${l.map(card).join('')}</div></div></div>`).join('')}
+
+  ${cur?`<div class="panel"><div class="panel-h">
+    <b>${icon('i-chart')} Lịch sử số liệu · ${esc(cur.name)}</b>
+    <small>${STATS.filter(x=>x.channel_id===cur.id).length} mốc đã lưu</small></div>
+    ${lichSuSoLieu(cur.id)}
+    <div class="panel-b" style="border-top:1px solid var(--line)">
+      <button class="btn btn-pri btn-full" id="scAdd" style="margin:0">${icon('i-plus')}
+        Nhập số liệu mới cho ${esc(cur.name)}</button></div></div>`
+   :`<div class="panel"><div class="empty">${icon('i-chart')}<br><br>
+      Bấm vào một kênh ở trên để xem lịch sử số liệu và nhập mốc mới.</div></div>`}`;
+}
+
 function viewChannels(){
   if(CHTAB==='metric') return viewMetrics();
+  if(CHTAB==='input')  return viewStatInput();
   const wk=new Date(D0()); wk.setDate(wk.getDate()-((wk.getDay()+6)%7));
   const groups={};
   CHANNELS.forEach(c=>{(groups[c.platform]=groups[c.platform]||[]).push(c);});
@@ -1350,7 +1681,6 @@ function viewChannels(){
     return (c.target_week||0)>n;});
 
   const card=(c,i)=>{
-    const P=PLAT[c.platform]||{};
     const all=POSTS.filter(p=>p.channel===c.name);
     const n=all.filter(p=>p.pub_date&&new Date(p.pub_date)>=wk).length;
     const t=c.target_week||0, pc=t?Math.min(100,Math.round(n/t*100)):0;
@@ -1358,11 +1688,17 @@ function viewChannels(){
     const v=posted.reduce((s,x)=>s+(x.views||0),0);
     const own=c.owner_content||((c.stream==='tiktok')?deskOwner('tiktok'):deskOwner('social'));
     const dsn=c.owner_design||deskOwner('design');
+    const P=PLAT[c.platform]||{};
     const bud=c.budget_month||0, sp=c.spent_month||0;
     return `<div class="panel" style="margin:0">
       <div class="panel-h" style="border-left:3px solid ${P.color||'#999'}">
         <b>${esc(c.name)}</b>
-        <span class="pill pill-s ${pc>=100?'s-green':pc>=50?'s-amber':'s-red'}">${n}/${t} bài tuần</span></div>
+        <span style="display:flex;align-items:center;gap:7px">
+          ${c.link?`<a class="chopen pl-${esc(c.platform.toLowerCase().replace(/[^a-z]/g,''))}"
+            href="${esc(c.link)}" target="_blank" rel="noopener"
+            title="Mở ${esc(c.name)}">${icon(picon(c.platform))}</a>`:''}
+          <span class="pill pill-s ${pc>=100?'s-green':pc>=50?'s-amber':'s-red'}">${n}/${t} bài tuần</span>
+        </span></div>
       <div class="panel-b" style="padding-bottom:10px">
         <div class="prow" style="border:0;padding:0 0 9px">
           <span class="bar" style="flex:1"><i class="${pc>=100?'ok':pc>=50?'':'warn'}" style="width:${pc}%"></i></span>
@@ -1493,6 +1829,14 @@ function viewDesk(k){
     {t:'Đang nằm ở bên thiết kế',ic:'i-brush',c:'pink',
      l:open.filter(p=>norm(p.status)==='Đang thiết kế')},
   ] : [
+    ...(d.kind==='film'?[
+      {t:'Chờ quay',ic:'i-cam',c:'teal',
+       l:open.filter(p=>norm(p.status)==='Đang quay'&&!p.film_started)},
+      {t:'Đang quay',ic:'i-video',c:'pink',
+       l:open.filter(p=>norm(p.status)==='Đang quay'&&p.film_started)},
+      {t:'Đã bàn giao Editor',ic:'i-check',c:'blue',
+       l:open.filter(p=>p.film_done&&norm(p.status)!=='Đang quay')},
+    ]:[]),
     {t:'Việc mới được giao — chờ nhận',ic:'i-inbox',c:'teal',
      l:open.filter(p=>norm(p.status)==='Đang thiết kế'&&p.editor===who&&!p.design_started
         &&p.writer!==who)},
@@ -1505,13 +1849,15 @@ function viewDesk(k){
 
   /* nút hành động ngay trên dòng, không phải mở drawer mới làm được */
   const qrow=p=>{
-    const isD=d.kind==='design', st=norm(p.status);
+    const isD=d.kind==='design', isF=d.kind==='film', st=norm(p.status);
     let act=null;
-    if(isD&&st==='Đang thiết kế'&&!p.design_started) act=['Nhận việc','qk-take'];
+    if(isF&&st==='Đang quay'&&!p.film_started) act=['Nhận quay','qk-fstart'];
+    else if(isF&&st==='Đang quay'&&p.film_started) act=['Quay xong','qk-fdone'];
+    else if(isD&&st==='Đang thiết kế'&&!p.design_started) act=['Nhận việc','qk-take'];
     else if(isD&&st==='Đang thiết kế'&&p.design_started) act=['Gửi Leader duyệt','qk-send'];
     else if(isD&&st==='Cần sửa ấn phẩm') act=['Đã sửa xong','qk-send'];
     else if(!isD&&['Đang viết','Cần sửa nội dung'].includes(st)) act=['Gửi duyệt','qk-tosub'];
-    return browRow(p,{design:isD,needBrief:isD,act:act});};
+    return browRow(p,{design:isD||isF,needBrief:isD,act:act});};
 
   const queueHtml=`<div class="grid2">${queues.map(q=>`<div class="panel">
     <div class="panel-h"><b><span class="qi t-${q.c}" style="width:26px;height:26px;border-radius:8px;display:inline-flex;align-items:center;justify-content:center">${icon(q.ic)}</span>${esc(q.t)}</b>
@@ -1625,17 +1971,24 @@ function viewDesk(k){
         <span class="qr">${dueChip(t.due,null,tgrp(t)==='Hoàn thành')}</span></div>`).join('')
         :'<div class="empty">Chưa có việc phát sinh nào</div>'}</div></div>`;
 
-  const body={queue:giaoChoToiBlock(who)+queueHtml,cat:catHtml,task:taskHtml,
-    done:doneHtml,mine:mineHtml}[DTAB]||queueHtml;
+  const body={queue:(d.kind==='film'?lichQuay(who):'')+giaoChoToiBlock(who)+queueHtml,
+    cat:catHtml,task:taskHtml,done:doneHtml,mine:mineHtml}[DTAB]||queueHtml;
 
   return ph(d.name+(who?' — '+who:''), d.desc,
     who===ME.name?`<span style="display:flex;gap:8px">
       <button class="btn btn-gh btn-sm" id="dkNewPost">${icon('i-pen')}Tạo nội dung</button>
       <button class="btn btn-pri btn-sm" id="dkSelf">${icon('i-plus')}Thêm việc của tôi</button></span>`:'') + `
   <div class="statbar">
-    ${[['i-hand','pri','Đang ở tay',mine.length],['i-alert','red','Trễ hạn',lateN],
-       ['i-loop','blue','Đang chạy',open.length],['i-check','green','Đã đăng',posted.length],
+    ${(d.kind==='film'?[
+       ['i-cam','pri','Buổi quay chờ',open.filter(p=>norm(p.status)==='Đang quay'&&!p.film_started).length],
+       ['i-video','pink','Đang quay',open.filter(p=>norm(p.status)==='Đang quay'&&p.film_started).length],
+       ['i-alert','red','Quá hẹn quay',
+         open.filter(p=>norm(p.status)==='Đang quay'&&p.film_date&&dd(p.film_date)<0).length],
+       ['i-check','green','Đã bàn giao',POSTS.filter(p=>p.film_done).length],
        ['i-list','gray','Việc dự án',tk.length]]
+     :[['i-hand','pri','Đang ở tay',mine.length],['i-alert','red','Trễ hạn',lateN],
+       ['i-loop','blue','Đang chạy',open.length],['i-check','green','Đã đăng',posted.length],
+       ['i-list','gray','Việc dự án',tk.length]])
       .map(([ic,c,t,n])=>`<div class="stat s-${c} ${n?'':'zero'}">
         <span class="stat-i">${icon(ic)}</span><span class="stat-v">${n}</span>
         <span class="stat-t">${t}</span></div>`).join('')}
@@ -1973,8 +2326,10 @@ function browRow(p,opt){
   return `<div class="brow ${isMine?'mine':''}" style="--wc:${col}">
     <span class="brow-av" title="${esc(h||'chưa ai giữ')}">
       ${h?avat(h):'<span class="av none">?</span>'}
-      <i class="brow-tag ${f.hold==='leader'?'ld':f.hold==='design'?'dg':f.hold==='writer'?'wr':'dn'}">${
-        f.hold==='leader'?'Leader':f.hold==='design'?'Thiết kế':f.hold==='writer'?'Content':'Xong'}</i>
+      <i class="brow-tag ${f.hold==='leader'?'ld':f.hold==='design'?'dg'
+        :f.hold==='film'?'fm':f.hold==='writer'?'wr':'dn'}">${
+        f.hold==='leader'?'Leader':f.hold==='design'?'Thiết kế'
+        :f.hold==='film'?'Quay':f.hold==='writer'?'Content':'Xong'}</i>
     </span>
     <span class="brow-m" data-post="${p.id}">
       <b class="brow-t">${esc(p.title)}</b>
@@ -2074,7 +2429,6 @@ function viewWork(){
 
   /* thẻ kênh */
   const grid=CHANNELS.map((c,i)=>{
-    const P=PLAT[c.platform]||{};
     let all=POSTS.filter(p=>p.channel===c.name);
     if(target) all=all.filter(p=>p.writer===target||holds(p,target));
     const op=all.filter(p=>!DONE.includes(p.status));
@@ -2082,6 +2436,7 @@ function viewWork(){
     const t=c.target_week||0, pc=t?Math.min(100,Math.round(n/t*100)):0;
     const mine2=op.filter(p=>holds(p,target||ME.name)).length;
     const lt=op.filter(latePost).length;
+    const P=PLAT[c.platform]||{};
     if(target&&!all.length) return '';
     return `<button class="wch ${WCH===c.id?'on':''}" data-wch="${c.id}">
       <span class="wch-t"><span class="wch-d" style="background:${P.color||'#999'}"></span>
@@ -2182,6 +2537,305 @@ function viewWork(){
     <div>${cur_b.l.length?cur_b.l.map(row).join(''):'<div class="empty">Không có bài nào trong nhóm này</div>'}</div></div>`;
 }
 
+
+
+/* ═══════ KHUYẾN MÃI SÀN — ShopeeFood, GrabFood ═══════ */
+const PROMO_KIND={
+  'Freeship Xtra':{ic:'i-truck',c:'blue',
+    ai:'Sàn tài trợ 100% mã freeship 15.000đ cho khách',
+    quan:'Quán chịu thêm chiết khấu 3% trên đơn — 2% nếu là Quán Yêu Thích',
+    khi:'Nên bật thường xuyên. Đơn có freeship dễ chốt hơn hẳn, phí ship là rào cản lớn nhất.'},
+  'Deal 1Đ':{ic:'i-bolt',c:'red',
+    ai:'Sàn bù phần lớn giá món, bán giá 1.000đ trong khung giờ vàng',
+    quan:'Quán chịu một phần theo thoả thuận, số suất giới hạn',
+    khi:'Dùng để kéo khách mới biết tới quán. Đừng kỳ vọng lãi ở đơn này.'},
+  'Combo tiết kiệm':{ic:'i-box',c:'green',
+    ai:'Sàn hiển thị combo ở vị trí ưu tiên',
+    quan:'Quán tự chịu toàn bộ phần giảm giá',
+    khi:'Cách tốt nhất để đẩy giá trị đơn trung bình. Ghép món lời cao với món hút khách.'},
+  'Voucher quán':{ic:'i-tag',c:'amber',
+    ai:'Sàn không tài trợ',
+    quan:'Quán chịu 100% giá trị voucher',
+    khi:'Đặt ngưỡng đơn tối thiểu cao hơn giá trị đơn trung bình khoảng 20–30%.'},
+  'Đồng tài trợ':{ic:'i-share',c:'pri',
+    ai:'Sàn và quán cùng chia phần giảm',
+    quan:'Quán chịu phần thoả thuận, cần đạt chỉ số vận hành mới được mời',
+    khi:'Hiệu quả nhất trong các chương trình. Giữ tỉ lệ huỷ đơn thấp và chuẩn bị món nhanh để đủ điều kiện.'},
+  'Flash Sale':{ic:'i-clock',c:'pink',
+    ai:'Sàn đẩy vào khung giờ cao điểm 11h–13h',
+    quan:'Quán chịu phần giảm, thường 30–40%',
+    khi:'Chỉ nên chạy khi bếp đủ sức tải giờ cao điểm.'},
+};
+const pkind=p=>PROMO_KIND[p.kind]||PROMO_KIND['Voucher quán'];
+
+/* Bài toán quan trọng nhất: sau hoa hồng và chiết khấu, quán còn lại bao nhiêu */
+function promoTinh(p){
+  const hh=+(SET.shopee_hoahong||22);
+  const yt=String(SET.shopee_yeuthich||'0')==='1';
+  const gmv=p.gmv||0, n=p.orders||0;
+  const phiSan=gmv*hh/100;
+  /* Freeship Xtra: chiết khấu thêm, Quán Yêu Thích được giảm 1 điểm */
+  const pctThem=p.quan_chiu_pct?(p.kind==='Freeship Xtra'&&yt?p.quan_chiu_pct-1:p.quan_chiu_pct):0;
+  const chietKhau=gmv*pctThem/100;
+  const giamTrucTiep=(p.giam_moi_don||0)*n + (p.quan_chiu_tien||0);
+  const conLai=gmv-phiSan-chietKhau-giamTrucTiep;
+  return {hh,yt,gmv,n,phiSan,pctThem,chietKhau,giamTrucTiep,conLai,
+    aov:n?gmv/n:0, conMoiDon:n?conLai/n:0,
+    tyLe:gmv?conLai/gmv*100:0};
+}
+
+/* ═══════ MỤC TIÊU QUẢNG CÁO THEO NGÀNH F&B ═══════ */
+const ADGOAL={
+  'Like trang':   {ic:'i-heart', unit:'like',      lbl:'Lượt thích trang',
+    hint:'Tăng người theo dõi fanpage — nền tảng để chạy các chiến dịch sau',
+    tot:'CPL', mo:'chi phí mỗi like', tot_ok:3000},
+  'Tương tác bài':{ic:'i-share', unit:'tương tác', lbl:'Lượt tương tác',
+    hint:'Đẩy bài viral, tăng bình luận và chia sẻ',
+    tot:'CPE', mo:'chi phí mỗi tương tác', tot_ok:1500},
+  'Tin nhắn':     {ic:'i-inbox', unit:'tin nhắn',  lbl:'Tin nhắn nhận được',
+    hint:'Khách nhắn hỏi món, đặt bàn, hỏi đường',
+    tot:'CPM_msg', mo:'chi phí mỗi tin nhắn', tot_ok:25000},
+  'Ghé quán':     {ic:'i-map',   unit:'lượt ghé',  lbl:'Lượt tìm đường / ghé quán',
+    hint:'Khách bấm chỉ đường hoặc gọi điện tới quán',
+    tot:'CPV', mo:'chi phí mỗi lượt ghé', tot_ok:15000},
+  'Đặt món':      {ic:'i-money', unit:'đơn',       lbl:'Số đơn đặt món',
+    hint:'Đơn qua app giao hàng hoặc đặt trực tiếp — có doanh thu để tính ROAS',
+    tot:'CPO', mo:'chi phí mỗi đơn', tot_ok:35000, doanhthu:true},
+  'Nhắn tin lại': {ic:'i-loop',  unit:'lượt mở',   lbl:'Lượt mở tin nhắn',
+    hint:'ZNS, tin nhắn nhắc khách cũ quay lại',
+    tot:'CPR', mo:'chi phí mỗi lượt mở', tot_ok:2000},
+  'Tiếp cận':     {ic:'i-users', unit:'người',     lbl:'Số người tiếp cận',
+    hint:'Cho nhiều người biết tới quán — dùng khi khai trương',
+    tot:'CPR2', mo:'chi phí mỗi 1.000 người', tot_ok:60000},
+};
+const goalOf=a=>ADGOAL[a.goal]||ADGOAL['Tiếp cận'];
+/* Chi phí mỗi kết quả */
+function cpr(a){
+  const g=goalOf(a), r=a.results||0;
+  if(!r||!a.spent) return null;
+  return a.goal==='Tiếp cận' ? a.spent/r*1000 : a.spent/r;
+}
+const cprOk=a=>{const c=cpr(a); const g=goalOf(a);
+  return c===null?null:c<=g.tot_ok;};
+
+
+/* ─── Màn khuyến mãi sàn ─── */
+let PZTAB='dang';
+function viewPromo(){
+  const l=PROMOS.filter(x=>!x.archived);
+  const dang=l.filter(x=>x.status==='Đang chạy');
+  const xong=l.filter(x=>x.status==='Đã kết thúc');
+  const nhap=l.filter(x=>x.status==='Nháp');
+  const hh=+(SET.shopee_hoahong||22);
+  const yt=String(SET.shopee_yeuthich||'0')==='1';
+
+  const tong=l.reduce((a,p)=>{const t=promoTinh(p);
+    a.gmv+=t.gmv; a.phi+=t.phiSan; a.ck+=t.chietKhau; a.giam+=t.giamTrucTiep;
+    a.con+=t.conLai; a.don+=t.n; return a;},{gmv:0,phi:0,ck:0,giam:0,con:0,don:0});
+
+  const row=p=>{
+    const t=promoTinh(p), k=pkind(p);
+    const d=p.end?dd(p.end):null;
+    return `<div class="pz ${p.status==='Đang chạy'?'on':''}" data-promo="${p.id}">
+      <div class="pz-h">
+        <span class="pz-i s-${k.c}">${icon(k.ic)}</span>
+        <span class="pz-t"><b>${esc(p.name)}</b>
+          <small>${esc(p.kind)} · ${esc(p.channel||'')}
+            ${p.status==='Đang chạy'&&d!==null?` · còn ${d} ngày`:''}</small></span>
+        <span class="pill pill-s ${p.status==='Đang chạy'?'s-green'
+          :p.status==='Nháp'?'s-gray':'s-blue'}">${esc(p.status)}</span>
+      </div>
+      ${t.n?`<div class="pz-m">
+        <span><i>Đơn</i><b>${nf(t.n)}</b></span>
+        <span><i>Doanh thu gộp</i><b>${mshort(t.gmv)}</b></span>
+        <span><i>Giá trị đơn TB</i><b>${nf(Math.round(t.aov))}đ</b></span>
+        <span><i>Quán thực nhận</i><b class="${t.tyLe>=60?'good':t.tyLe>=45?'':'bad'}">${mshort(t.conLai)}</b></span>
+        <span><i>Còn lại mỗi đơn</i><b class="${t.conMoiDon>=50000?'good':t.conMoiDon>=30000?'':'bad'}">${
+          nf(Math.round(t.conMoiDon))}đ</b></span>
+        <span><i>Tỉ lệ giữ lại</i><b class="${t.tyLe>=60?'good':t.tyLe>=45?'':'bad'}">${t.tyLe.toFixed(0)}%</b></span>
+      </div>
+      <div class="pz-bar" title="Doanh thu gộp ${mshort(t.gmv)}">
+        <i class="b1" style="width:${t.gmv?t.conLai/t.gmv*100:0}%" title="Quán nhận"></i>
+        <i class="b2" style="width:${t.gmv?t.phiSan/t.gmv*100:0}%" title="Hoa hồng sàn"></i>
+        <i class="b3" style="width:${t.gmv?t.chietKhau/t.gmv*100:0}%" title="Chiết khấu chương trình"></i>
+        <i class="b4" style="width:${t.gmv?t.giamTrucTiep/t.gmv*100:0}%" title="Quán giảm cho khách"></i>
+      </div>`
+      :`<div class="pz-none">Chưa có đơn nào — chương trình chưa chạy hoặc chưa nhập số</div>`}
+    </div>`;};
+
+  const body={dang:dang,xong:xong,nhap:nhap}[PZTAB]||dang;
+
+  return ph('Khuyến mãi sàn',
+    `Chương trình trên ShopeeFood · hoa hồng sàn ${hh}%${yt?' · đang là Quán Yêu Thích':''}`,
+    `<span style="display:flex;gap:8px">
+      <button class="btn btn-gh btn-sm" id="pzSet">${icon('i-cog')}Phí sàn</button>
+      <button class="btn btn-pri btn-sm" id="pzNew">${icon('i-plus')}Thêm chương trình</button></span>`) + `
+  <div class="statbar" style="grid-template-columns:repeat(5,minmax(0,1fr))">
+    ${[['i-box','pri','Đơn từ khuyến mãi',nf(tong.don)],
+       ['i-money','blue','Doanh thu gộp',mshort(tong.gmv)],
+       ['i-loop','amber','Hoa hồng sàn',mshort(tong.phi)],
+       ['i-tag','red','Quán giảm cho khách',mshort(tong.ck+tong.giam)],
+       ['i-check',tong.gmv&&tong.con/tong.gmv>=.55?'green':'red','Quán thực nhận',mshort(tong.con)]]
+      .map(([ic,c,t,n])=>`<div class="stat s-${c}">
+        <span class="stat-i">${icon(ic)}</span><span class="stat-v">${n}</span>
+        <span class="stat-t">${t}</span></div>`).join('')}
+  </div>
+
+  <div class="notice" style="margin-bottom:14px">
+    <span class="ni">${icon('i-alert')}</span>
+    <span><b>Cách đọc bảng này</b>
+      <p>Doanh thu gộp là tiền khách trả. Trừ hoa hồng sàn ${hh}%, trừ chiết khấu chương trình,
+      trừ phần quán giảm cho khách — còn lại mới là tiền về quán, chưa tính giá vốn món ăn.
+      Giữ lại dưới 45% là dấu hiệu chương trình đang lỗ.</p></span></div>
+
+  <div class="tabs">
+    <button data-pztab="dang" class="${PZTAB==='dang'?'on':''}">${icon('i-bolt')}Đang chạy (${dang.length})</button>
+    <button data-pztab="xong" class="${PZTAB==='xong'?'on':''}">${icon('i-check')}Đã kết thúc (${xong.length})</button>
+    <button data-pztab="nhap" class="${PZTAB==='nhap'?'on':''}">${icon('i-pen')}Dự kiến (${nhap.length})</button>
+  </div>
+
+  <div class="pzgrid">${body.length?body.map(row).join('')
+    :`<div class="panel"><div class="empty">${icon('i-tag')}<br><br>
+      Chưa có chương trình nào ở nhóm này.</div></div>`}</div>
+
+  <div class="panel"><div class="panel-h"><b>${icon('i-doc')} Các loại chương trình và ai chịu chi phí</b>
+    <small>bấm để xem khi nào nên dùng</small></div>
+    <div>${Object.entries(PROMO_KIND).map(([k,v])=>`
+      <div class="pzk">
+        <span class="pz-i s-${v.c}">${icon(v.ic)}</span>
+        <span class="pzk-t"><b>${esc(k)}</b>
+          <span class="pzk-r"><i>Sàn</i>${esc(v.ai)}</span>
+          <span class="pzk-r"><i>Quán</i>${esc(v.quan)}</span>
+          <span class="pzk-n">${icon('i-bolt')}${esc(v.khi)}</span></span>
+      </div>`).join('')}</div></div>`;
+}
+
+/* Form thêm sửa chương trình */
+function editPromo(p){
+  const isNew=!p; const d=p||{kind:'Freeship Xtra',platform:'ShopeeFood',status:'Nháp',
+    channel:(CHANNELS.find(c=>ckindOf(c)==='sales')||{}).name};
+  const t=new Date(D0()); t.setDate(t.getDate()+30);
+  const k=pkind(d);
+  openDrawer(`<div class="dr-code">${isNew?'Chương trình mới':'Sửa chương trình'}</div>
+    <div class="dr-title">${isNew?'Thêm khuyến mãi sàn':esc(p.name)}</div>
+
+    <div class="dr-lab">Loại chương trình</div>
+    <div class="goalpick">${Object.entries(PROMO_KIND).map(([kk,v])=>`
+      <button class="gp ${kk===d.kind?'on':''}" data-pzk="${esc(kk)}">
+        ${icon(v.ic)}<span><b>${esc(kk)}</b><small>${esc(v.quan)}</small></span></button>`).join('')}</div>
+    <input type="hidden" id="pzKind" value="${esc(d.kind)}">
+
+    ${F_.txt('pzName','Tên chương trình',d.name,'Ví dụ: Freeship Xtra – tháng 8')}
+    <div class="two"><div>${F_.sel('pzCh','Kênh áp dụng',d.channel,
+      CHANNELS.filter(c=>ckindOf(c)==='sales').map(c=>c.name).concat(['Khác']))}</div>
+      <div>${F_.sel('pzSt','Trạng thái',d.status,['Nháp','Đang chạy','Đã kết thúc'])}</div></div>
+    <div class="two"><div>${F_.date('pzS','Bắt đầu',d.start||iso(new Date()))}</div>
+      <div>${F_.date('pzE','Kết thúc',d.end||iso(t))}</div></div>
+    <div>${F_.sel('pzOwn','Phụ trách',d.owner||ME.name,MEMBERS.map(m=>m.name))}</div>
+
+    <div class="dr-lab">Phần quán phải chịu</div>
+    <div class="statgrid">
+      <div class="stf"><label>Chiết khấu thêm (%)</label>
+        <input type="number" id="pzPct" class="fld" step="0.5" value="${d.quan_chiu_pct||''}" placeholder="0">
+        <small>Freeship Xtra là 3%, Quán Yêu Thích 2%</small></div>
+      <div class="stf"><label>Giảm cho khách mỗi đơn (đ)</label>
+        <input type="number" id="pzMoi" class="fld" value="${d.giam_moi_don||''}" placeholder="0">
+        <small>voucher, combo giảm bao nhiêu một đơn</small></div>
+      <div class="stf"><label>Chi phí trọn gói (đ)</label>
+        <input type="number" id="pzTien" class="fld" value="${d.quan_chiu_tien||''}" placeholder="0">
+        <small>khoản trả một lần, ví dụ suất Deal 1Đ</small></div>
+    </div>
+
+    <div class="dr-lab">Kết quả chạy được</div>
+    <div class="two">
+      <div class="stf"><label>Số đơn phát sinh</label>
+        <input type="number" id="pzOrd" class="fld" value="${d.orders||''}" placeholder="0"></div>
+      <div class="stf"><label>Doanh thu gộp (đ)</label>
+        <input type="number" id="pzGmv" class="fld" value="${d.gmv||''}" placeholder="0">
+        <small>tiền khách trả, trước mọi khoản trừ</small></div>
+    </div>
+
+    ${F_.area('pzNote','Ghi chú',d.note,'Điều kiện, cam kết với sàn, điều cần nhớ…')}
+    <div id="pzPreview"></div>
+    <button class="btn btn-pri btn-full" id="pzSave">${icon('i-check')}${isNew?'Thêm chương trình':'Lưu'}</button>
+    ${!isNew?rowActions('promos',p.id):''}`);
+
+  const xemTruoc=()=>{
+    const tmp={kind:document.getElementById('pzKind').value,
+      quan_chiu_pct:+V('pzPct')||0,giam_moi_don:+V('pzMoi')||0,
+      quan_chiu_tien:+V('pzTien')||0,orders:+V('pzOrd')||0,gmv:+V('pzGmv')||0};
+    const t2=promoTinh(tmp);
+    const el=document.getElementById('pzPreview');
+    if(!t2.gmv){el.innerHTML='';return;}
+    el.innerHTML=`<div class="pzcalc">
+      <b>Sau khi trừ hết, quán còn ${mshort(t2.conLai)}</b>
+      <div class="pzc-r"><span>Doanh thu gộp</span><b>${mshort(t2.gmv)}</b></div>
+      <div class="pzc-r minus"><span>Hoa hồng sàn ${t2.hh}%</span><b>−${mshort(t2.phiSan)}</b></div>
+      ${t2.chietKhau?`<div class="pzc-r minus"><span>Chiết khấu chương trình ${t2.pctThem}%</span>
+        <b>−${mshort(t2.chietKhau)}</b></div>`:''}
+      ${t2.giamTrucTiep?`<div class="pzc-r minus"><span>Quán giảm cho khách</span>
+        <b>−${mshort(t2.giamTrucTiep)}</b></div>`:''}
+      <div class="pzc-r tot"><span>Quán thực nhận · ${t2.tyLe.toFixed(0)}% doanh thu</span>
+        <b class="${t2.tyLe>=55?'good':'bad'}">${mshort(t2.conLai)}</b></div>
+      <div class="pzc-n">${t2.tyLe>=55
+        ? 'Tỉ lệ giữ lại ổn. Nhớ trừ tiếp giá vốn món ăn để ra lãi thật.'
+        : 'Giữ lại dưới 55% là mỏng. Cân nhắc nâng giá trên sàn hoặc giảm mức ưu đãi.'}</div>
+    </div>`;};
+  ['pzPct','pzMoi','pzTien','pzOrd','pzGmv'].forEach(id=>{
+    const e=document.getElementById(id); if(e) e.oninput=xemTruoc;});
+  xemTruoc();
+  document.querySelectorAll('[data-pzk]').forEach(bt=>bt.onclick=()=>{
+    document.querySelectorAll('[data-pzk]').forEach(x=>x.classList.toggle('on',x===bt));
+    document.getElementById('pzKind').value=bt.dataset.pzk;
+    if(bt.dataset.pzk==='Freeship Xtra'&&!V('pzPct')) document.getElementById('pzPct').value=3;
+    xemTruoc();});
+  document.getElementById('pzSave').onclick=async()=>{
+    if(!V('pzName')){toast('Đặt tên cho chương trình đã nhé');return;}
+    const row={name:V('pzName'),kind:document.getElementById('pzKind').value,
+      platform:'ShopeeFood',channel:V('pzCh'),status:V('pzSt'),
+      start:V('pzS')||null,end:V('pzE')||null,owner:V('pzOwn'),
+      quan_chiu_pct:+V('pzPct')||0,giam_moi_don:+V('pzMoi')||0,quan_chiu_tien:+V('pzTien')||0,
+      orders:+V('pzOrd')||0,gmv:+V('pzGmv')||0,
+      note:document.getElementById('pzNote').value||null,archived:false};
+    if(isNew) await add('promos',row,'Đã thêm chương trình');
+    else await save('promos',p.id,row,'Đã lưu');
+  };
+  if(!isNew) bindActions('promos',p.id,p);
+}
+
+function phiSanForm(){
+  openDrawer(`<div class="dr-code">Cấu hình</div>
+    <div class="dr-title">Phí sàn ShopeeFood</div>
+    <div class="dr-meta">Dùng để tính quán thực nhận sau mỗi chương trình.
+      Xem đúng mức của quán mình trong hợp đồng hoặc app quản trị.</div>
+    <div class="dr-lab">Hoa hồng sàn (%)</div>
+    <input type="number" id="fsHH" class="fld" step="0.5" value="${SET.shopee_hoahong||22}">
+    <small style="display:block;font-size:11px;color:var(--ink3);margin-top:5px">
+      Mức phổ biến 20–25% tuỳ ngành hàng và thoả thuận.</small>
+    <div class="dr-lab">Quán Yêu Thích</div>
+    <div class="segbtn" style="width:100%">
+      <button id="ytNo" class="${String(SET.shopee_yeuthich||'0')!=='1'?'on':''}">Chưa phải</button>
+      <button id="ytYes" class="${String(SET.shopee_yeuthich||'0')==='1'?'on':''}">Đã là Quán Yêu Thích</button>
+    </div>
+    <input type="hidden" id="fsYT" value="${SET.shopee_yeuthich||'0'}">
+    <div class="notice" style="margin-top:12px">
+      <span class="ni">${icon('i-bolt')}</span>
+      <span><b>Quán Yêu Thích lợi gì</b>
+        <p>Chiết khấu Freeship Xtra giảm từ 3% xuống 2%, và được ưu tiên hiển thị.
+        Điều kiện thường là giữ tỉ lệ huỷ đơn thấp, thời gian chuẩn bị món nhanh và đánh giá tốt.</p></span></div>
+    <button class="btn btn-pri btn-full" id="fsSave">Lưu cấu hình</button>`);
+  const set=v=>{document.getElementById('fsYT').value=v;
+    document.getElementById('ytYes').classList.toggle('on',v==='1');
+    document.getElementById('ytNo').classList.toggle('on',v!=='1');};
+  document.getElementById('ytYes').onclick=()=>set('1');
+  document.getElementById('ytNo').onclick=()=>set('0');
+  document.getElementById('fsSave').onclick=async()=>{
+    await sb.from('settings').upsert({key:'shopee_hoahong',value:V('fsHH')||'22'});
+    await sb.from('settings').upsert({key:'shopee_yeuthich',value:document.getElementById('fsYT').value});
+    toast('Đã lưu cấu hình phí sàn'); closeDrawer(); await loadAll();
+  };
+}
+
 /* ═════════ DIGITAL MARKETING — quảng cáo ═════════ */
 const ADS_ST={'Đang chạy':'s-blue','Đã kết thúc':'s-green','Tạm dừng':'s-amber','Nháp':'s-gray'};
 const ctr=a=>a.impressions?(a.clicks/a.impressions*100):0;
@@ -2197,79 +2851,126 @@ function viewAds(){
   const sp=list.reduce((s,a)=>s+(a.spent||0),0);
   const imp=list.reduce((s,a)=>s+(a.impressions||0),0);
   const clk=list.reduce((s,a)=>s+(a.clicks||0),0);
-  const cv=list.reduce((s,a)=>s+(a.conversions||0),0);
   const rev=list.reduce((s,a)=>s+(a.revenue||0),0);
-  const all={spent:sp,impressions:imp,clicks:clk,conversions:cv,revenue:rev};
+
+  /* Gom theo mục tiêu — cách F&B thực sự nhìn */
+  const byGoal={};
+  list.forEach(a=>{const k=a.goal||'Tiếp cận';
+    byGoal[k]=byGoal[k]||{spent:0,results:0,n:0,run:0};
+    byGoal[k].spent+=a.spent||0; byGoal[k].results+=a.results||0;
+    byGoal[k].n++; if(a.status==='Đang chạy') byGoal[k].run++;});
+  const goalRows=Object.entries(byGoal)
+    .sort((x,y)=>y[1].spent-x[1].spent);
 
   const byPlat={};
   list.forEach(a=>{const k=a.platform;
-    byPlat[k]=byPlat[k]||{spent:0,clicks:0,conversions:0,impressions:0,revenue:0,n:0};
-    ['spent','clicks','conversions','impressions','revenue'].forEach(f=>byPlat[k][f]+=a[f]||0);
-    byPlat[k].n++;});
-  const mx=Math.max(1,...Object.values(byPlat).map(x=>x.spent));
+    byPlat[k]=byPlat[k]||{spent:0,results:0,n:0};
+    byPlat[k].spent+=a.spent||0; byPlat[k].results+=a.results||0; byPlat[k].n++;});
+  const mxP=Math.max(1,...Object.values(byPlat).map(x=>x.spent));
   const COL={'Meta Ads':'#1877F2','TikTok Ads':'#111827','Google Ads':'#34A853',
     'Nội sàn':'#EE4D2D','Zalo ZNS':'#0068FF'};
 
-  return ph('Quảng cáo','Theo dõi ngân sách và hiệu quả từng chiến dịch',
+  /* chỉ tính ROAS cho nhóm có doanh thu */
+  const banHang=list.filter(a=>goalOf(a).doanhthu);
+  const spBH=banHang.reduce((s,a)=>s+(a.spent||0),0);
+  const roasBH=spBH?rev/spBH:0;
+
+  /* cảnh báo */
+  const canhBao=[];
+  list.filter(a=>a.status==='Đang chạy').forEach(a=>{
+    const c=cpr(a), g=goalOf(a);
+    if(c!==null&&c>g.tot_ok*1.5)
+      canhBao.push({a,t:`${g.mo} đang cao: ${nf(Math.round(c))} đ`,
+        d:`ngưỡng tốt dưới ${nf(g.tot_ok)} đ`,lv:'red'});
+    if(a.budget&&a.spent/a.budget>=.9)
+      canhBao.push({a,t:'Sắp hết ngân sách',
+        d:`đã dùng ${Math.round(a.spent/a.budget*100)}% của ${mshort(a.budget)}`,lv:'amber'});
+    if(!a.results&&a.spent>500000)
+      canhBao.push({a,t:'Chi tiền nhưng chưa có kết quả',
+        d:`đã chi ${mshort(a.spent)} mà chưa ghi nhận ${goalOf(a).unit} nào`,lv:'red'});
+  });
+
+  return ph('Quảng cáo','Theo dõi ngân sách và kết quả theo đúng mục tiêu từng chiến dịch',
     `<button class="btn btn-pri btn-sm" id="newAd">${icon('i-plus')}Chiến dịch mới</button>`) + `
-  <div class="kpis" style="grid-template-columns:repeat(6,minmax(0,1fr))">
-    ${kpi('pri','i-money','Đã chi',mshort(sp),`trên ${mshort(bud)} ngân sách`,bud?Math.round(sp/bud*100):0)}
-    ${kpi('teal','i-eye','Hiển thị',kf(imp),`CPM ${nf(Math.round(cpm(all)))} đ`)}
-    ${kpi('blue','i-target','Lượt nhấp',kf(clk),`CTR ${ctr(all).toFixed(2)}% · CPC ${nf(Math.round(cpc(all)))} đ`)}
-    ${kpi('amber','i-check','Chuyển đổi',nf(cv),`CPA ${nf(Math.round(cpa(all)))} đ`)}
-    ${kpi(roas(all)>=1?'green':'red','i-chart','ROAS',roas(all).toFixed(2)+'x',
-      rev?`doanh thu ${mshort(rev)}`:'chưa ghi doanh thu')}
-    ${kpi('gray','i-bolt','Đang chạy',run.length,`trên ${list.length} chiến dịch`)}
+  <div class="statbar" style="grid-template-columns:repeat(5,minmax(0,1fr))">
+    ${[['i-money','pri','Đã chi',mshort(sp)],
+       ['i-bolt','blue','Đang chạy',run.length],
+       ['i-eye','teal','Hiển thị',kf(imp)],
+       ['i-target','gray','Lượt nhấp',kf(clk)],
+       [banHang.length?'i-chart':'i-users',
+        banHang.length?(roasBH>=1?'green':'red'):'gray',
+        banHang.length?'ROAS đơn hàng':'Chưa chạy bán hàng',
+        banHang.length?roasBH.toFixed(2)+'x':'—']]
+      .map(([ic,c,t,n])=>`<div class="stat s-${c}">
+        <span class="stat-i">${icon(ic)}</span><span class="stat-v">${n}</span>
+        <span class="stat-t">${t}</span></div>`).join('')}
   </div>
+
+  <div class="panel"><div class="panel-h"><b>${icon('i-target')} Kết quả theo mục tiêu</b>
+    <small>mỗi mục tiêu đo bằng chỉ số riêng của nó</small></div>
+    <div class="panel-b"><div class="goalgrid">${goalRows.map(([k,v])=>{
+      const g=ADGOAL[k]||ADGOAL['Tiếp cận'];
+      const c=v.results?(k==='Tiếp cận'?v.spent/v.results*1000:v.spent/v.results):null;
+      const ok=c===null?null:c<=g.tot_ok;
+      return `<div class="gcard ${ok===false?'warn':''}">
+        <div class="gc-h"><span class="gc-i">${icon(g.ic)}</span>
+          <span class="gc-t"><b>${esc(k)}</b><small>${v.n} chiến dịch${v.run?` · ${v.run} đang chạy`:''}</small></span></div>
+        <div class="gc-m">
+          <span><i>${esc(g.lbl)}</i><b>${kf(v.results)}</b></span>
+          <span><i>${esc(g.mo)}</i><b class="${ok===false?'bad':ok?'good':''}">${
+            c===null?'—':nf(Math.round(c))+' đ'}</b></span>
+        </div>
+        <div class="gc-f">Đã chi ${mshort(v.spent)}${
+          c!==null?` · ngưỡng tốt dưới ${nf(g.tot_ok)} đ`:''}</div>
+      </div>`;}).join('')}</div></div></div>
+
   <div class="g3col"><div>
     <div class="panel"><div class="panel-h"><b>Chiến dịch</b><small>${list.length}</small></div>
       <div class="tbl-wrap"><table class="tbl"><thead><tr>
-        <th class="num">#</th><th>Chiến dịch</th><th>Nền tảng</th><th>Trạng thái</th>
-        <th>Chi / Ngân sách</th><th>Hiển thị</th><th>Nhấp</th><th>CTR</th><th>CPC</th>
-        <th>Chuyển đổi</th><th>CPA</th><th>ROAS</th></tr></thead><tbody>
+        <th class="num">#</th><th style="min-width:190px">Chiến dịch</th><th>Mục tiêu</th>
+        <th>Trạng thái</th><th style="min-width:120px">Chi / Ngân sách</th>
+        <th>Kết quả</th><th>Chi phí / kết quả</th><th>Hiển thị</th><th>CTR</th></tr></thead><tbody>
         ${list.length?list.map((a,i)=>{
           const p=a.budget?Math.round(a.spent/a.budget*100):0;
-          const r=roas(a);
+          const g=goalOf(a); const c=cpr(a); const ok=cprOk(a);
           return `<tr data-ad="${a.id}"><td class="num">${i+1}</td>
-            <td class="tt">${esc(a.name)}<div style="font-size:10.5px;color:var(--ink3)">${esc(a.goal)} · ${esc(a.owner)}</div></td>
-            <td><span class="pill pill-s s-gray">${esc(a.platform)}</span></td>
-            <td><span class="pill ${ADS_ST[a.status]||'s-gray'}">${esc(a.status)}</span></td>
-            <td><b>${mshort(a.spent)}</b><span style="color:var(--ink3)"> / ${mshort(a.budget)}</span>
-              <div class="bar" style="margin-top:4px"><i class="${p>100?'bad':p>85?'warn':'ok'}" style="width:${Math.min(100,p)}%"></i></div></td>
-            <td>${kf(a.impressions)}</td><td>${kf(a.clicks)}</td>
-            <td>${ctr(a).toFixed(2)}%</td><td>${nf(Math.round(cpc(a)))}</td>
-            <td>${nf(a.conversions)}</td>
-            <td>${a.conversions?nf(Math.round(cpa(a))):'—'}</td>
-            <td>${a.revenue?`<b style="color:${r>=1?'var(--green)':'var(--red)'}">${r.toFixed(2)}x</b>`:'—'}</td></tr>`;}).join('')
-        :'<tr><td colspan="12" class="empty">Chưa có chiến dịch nào</td></tr>'}
+            <td class="tt">${esc(a.name)}
+              <div style="font-size:10.5px;color:var(--ink3)">${esc(a.channel||'')} · ${esc(a.owner)}</div></td>
+            <td><span class="gtag">${icon(g.ic)}${esc(a.goal)}</span></td>
+            <td><span class="pill pill-s ${a.status==='Đang chạy'?'s-green'
+              :a.status==='Tạm dừng'?'s-amber':'s-gray'}">${esc(a.status)}</span></td>
+            <td><div class="prow" style="border:0;padding:0">
+              <span class="bar" style="flex:1"><i class="${p>=90?'bad':p>=70?'warn':'ok'}"
+                style="width:${Math.min(100,p)}%"></i></span>
+              <span class="pct">${mshort(a.spent)}</span></div>
+              <div style="font-size:10px;color:var(--ink3)">trên ${mshort(a.budget)}</div></td>
+            <td><b>${kf(a.results||0)}</b>
+              <div style="font-size:10px;color:var(--ink3)">${esc(g.unit)}</div></td>
+            <td>${c===null?'<span style="color:var(--ink3)">—</span>'
+              :`<b style="${ok?'color:var(--green)':'color:var(--red)'}">${nf(Math.round(c))} đ</b>
+                <div style="font-size:10px;color:var(--ink3)">mỗi ${
+                  a.goal==='Tiếp cận'?'1.000 người':esc(g.unit)}</div>`}</td>
+            <td>${kf(a.impressions)}</td>
+            <td>${ctr(a).toFixed(2)}%</td></tr>`;}).join('')
+          :'<tr><td colspan="9"><div class="empty">Chưa có chiến dịch nào</div></td></tr>'}
       </tbody></table></div></div>
-  </div><div class="rail">
-    <div class="panel" style="margin:0"><div class="panel-h"><b>Chi theo nền tảng</b></div>
+  </div><div>
+    <div class="panel"><div class="panel-h"><b>Chi theo nền tảng</b></div>
       <div class="panel-b">${Object.entries(byPlat).sort((a,b)=>b[1].spent-a[1].spent).map(([k,v])=>`
-        <div class="prow"><span class="nm"><span class="dd" style="width:8px;height:8px;border-radius:50%;background:${COL[k]||'#999'}"></span>${esc(k)}</span>
+        <div class="prow"><span class="nm">
+          <span class="dd" style="width:8px;height:8px;border-radius:50%;background:${COL[k]||'#999'}"></span>${esc(k)}</span>
           <span class="ct">${mshort(v.spent)} · ${v.n} CD</span>
-          <span class="bar" style="flex:0 0 52px"><i style="width:${Math.round(v.spent/mx*100)}%"></i></span></div>`).join('')}
-      </div></div>
-    <div class="panel" style="margin:0"><div class="panel-h"><b>Hiệu quả theo nền tảng</b>
-      <small>chi phí mỗi chuyển đổi</small></div>
-      <div class="panel-b">${Object.entries(byPlat).filter(([,v])=>v.conversions)
-        .sort((a,b)=>(a[1].spent/a[1].conversions)-(b[1].spent/b[1].conversions)).map(([k,v])=>`
-        <div class="prow"><span class="nm">${esc(k)}</span>
-          <span class="ct">${nf(v.conversions)} lượt</span>
-          <span class="ct" style="font-weight:600;color:var(--ink)">${nf(Math.round(v.spent/v.conversions))} đ</span></div>`).join('')
-        ||'<div class="empty">Chưa có chuyển đổi</div>'}</div></div>
-    <div class="panel" style="margin:0"><div class="panel-h"><b>Cảnh báo</b></div>
-      <div class="panel-b">${(()=>{
-        const w=[];
-        list.filter(a=>a.budget&&a.spent/a.budget>0.85&&a.status==='Đang chạy')
-          .forEach(a=>w.push(['red','i-alert','Sắp hết ngân sách',a.name,a.id]));
-        list.filter(a=>a.conversions&&cpa(a)>50000).forEach(a=>w.push(['amber','i-clock','CPA cao',a.name,a.id]));
-        list.filter(a=>a.revenue&&roas(a)<1).forEach(a=>w.push(['red','i-chart','ROAS dưới 1',a.name,a.id]));
-        list.filter(a=>a.status==='Đang chạy'&&dd(a.end)<0).forEach(a=>w.push(['amber','i-cal','Quá ngày kết thúc',a.name,a.id]));
-        return w.length?w.slice(0,6).map(([c,ic,t,n,id])=>`<div class="nf" data-ad="${id}">
-          <span class="nf-i t-${c}">${icon(ic)}</span>
-          <span class="nf-t"><b>${t}</b><small>${esc(n)}</small></span></div>`).join('')
-          :'<div class="empty" style="padding:16px">Không có cảnh báo</div>';})()}</div></div>
+          <span class="bar" style="flex:0 0 60px"><i style="width:${Math.round(v.spent/mxP*100)}%"></i></span>
+        </div>`).join('')}</div></div>
+
+    <div class="panel"><div class="panel-h"><b>Cảnh báo</b>
+      <small>${canhBao.length||''}</small></div>
+      <div>${canhBao.length?canhBao.slice(0,6).map(w=>`
+        <div class="hrow ${w.lv}" data-ad="${w.a.id}">
+          <span class="h-i">${icon(w.lv==='red'?'i-alert':'i-clock')}</span>
+          <span class="h-t"><b>${esc(w.t)}</b><small>${esc(w.a.name)} · ${w.d}</small></span>
+        </div>`).join('')
+        :`<div class="empty">${icon('i-check')}<br><br>Không có cảnh báo</div>`}</div></div>
   </div></div>`;
 }
 
@@ -2321,34 +3022,73 @@ function openAd(id){
 }
 
 function editAd(a){
-  const isNew=!a; const d=a||{platform:'Meta Ads',status:'Nháp',goal:'Nhận biết'};
+  const isNew=!a; const d=a||{platform:'Meta Ads',status:'Nháp',goal:'Like trang'};
   const t=new Date(D0()); t.setDate(t.getDate()+14);
+  const g=ADGOAL[d.goal]||ADGOAL['Like trang'];
   openDrawer(`<div class="dr-code">${isNew?'Chiến dịch mới':'Sửa chiến dịch'}</div>
     <div class="dr-title">${isNew?'Tạo chiến dịch quảng cáo':esc(a.name)}</div>
+
+    <div class="dr-lab">Chạy để làm gì</div>
+    <div class="goalpick">${Object.entries(ADGOAL).map(([k,v])=>`
+      <button class="gp ${k===d.goal?'on':''}" data-adgoal="${esc(k)}">
+        ${icon(v.ic)}<span><b>${esc(k)}</b><small>${esc(v.hint)}</small></span></button>`).join('')}</div>
+    <input type="hidden" id="adGoal" value="${esc(d.goal||'Like trang')}">
+
     ${F_.txt('adName','Tên chiến dịch',d.name,'Ví dụ: Khai trương CS2 — Tin nhắn')}
     <div class="two"><div>${F_.sel('adPlat','Nền tảng chạy',d.platform,
       ['Meta Ads','TikTok Ads','Google Ads','Nội sàn','Zalo ZNS','Khác'])}</div>
       <div>${F_.sel('adCh','Kênh đích',d.channel,
-        ['Facebook','Instagram','TikTok','Google Maps','Website','Shopee','GrabFood','Zalo'])}</div></div>
-    <div class="two"><div>${F_.sel('adGoal','Mục tiêu',d.goal,
-      ['Nhận biết','Tương tác','Tin nhắn','Kéo về quán','Tăng follow','Bán hàng','Giữ chân'])}</div>
-      <div>${F_.sel('adOwn','Phụ trách',d.owner||ME.name,MEMBERS.map(m=>m.name))}</div></div>
+        [...CHANNELS.map(c=>c.name),'Khác'])}</div></div>
+    <div class="two"><div>${F_.sel('adOwn','Phụ trách',d.owner||ME.name,MEMBERS.map(m=>m.name))}</div>
+      <div>${F_.sel('adSt','Trạng thái',d.status,['Nháp','Đang chạy','Tạm dừng','Đã kết thúc'])}</div></div>
     <div class="two"><div>${F_.date('adS','Bắt đầu',d.start||iso(new Date()))}</div>
       <div>${F_.date('adE','Kết thúc',d.end||iso(t))}</div></div>
     <div class="two"><div>${F_.num('adBud','Ngân sách (đ)',d.budget)}</div>
       <div><div class="dr-lab">Dự án</div><select id="adProj" class="fld">
         <option value="">Không thuộc dự án</option>${projOpts(d.project_id)}</select></div></div>
+
+    <div class="dr-lab">Số liệu chạy được ${isNew?'<span style="font-weight:400;color:var(--ink3)">— điền sau khi chạy</span>':''}</div>
+    <div class="statgrid">
+      <div class="stf"><label>Đã chi (đ)</label>
+        <input type="number" id="adSpent" class="fld" value="${d.spent||''}" placeholder="0"></div>
+      <div class="stf"><label id="adResLbl">${esc(g.lbl)}</label>
+        <input type="number" id="adRes" class="fld" value="${d.results||''}" placeholder="0">
+        <small id="adResHint">đơn vị: ${esc(g.unit)}</small></div>
+      <div class="stf"><label>Lượt hiển thị</label>
+        <input type="number" id="adImp" class="fld" value="${d.impressions||''}" placeholder="0"></div>
+      <div class="stf"><label>Lượt nhấp</label>
+        <input type="number" id="adClk" class="fld" value="${d.clicks||''}" placeholder="0"></div>
+      <div class="stf" id="adRevBox" style="${g.doanhthu?'':'display:none'}">
+        <label>Doanh thu thu về (đ)</label>
+        <input type="number" id="adRev" class="fld" value="${d.revenue||''}" placeholder="0">
+        <small>chỉ điền với chiến dịch đặt món</small></div>
+    </div>
+
     ${F_.area('adNote','Ghi chú',d.note,'Tệp đối tượng, thông điệp, điều cần lưu ý…')}
-    <button class="btn btn-pri btn-full" id="adSv">${isNew?'Tạo chiến dịch':'Lưu thay đổi'}</button>`);
-  document.getElementById('adSv').onclick=async()=>{
-    if(!V('adName')){toast('Nhập tên chiến dịch đã nhé');return;}
-    const row={name:V('adName'),platform:V('adPlat'),channel:V('adCh'),goal:V('adGoal'),
-      owner:V('adOwn'),start:V('adS'),end:V('adE'),budget:+V('adBud')||0,
-      project_id:+V('adProj')||null,note:V('adNote')||null};
-    if(isNew) await add('ads',{...row,status:'Nháp',spent:0,impressions:0,clicks:0,
-      conversions:0,revenue:0},'Đã tạo chiến dịch');
-    else await save('ads',a.id,row,'Đã lưu thay đổi');
+    <button class="btn btn-pri btn-full" id="adSave">${icon('i-check')}${isNew?'Tạo chiến dịch':'Lưu thay đổi'}</button>
+    ${!isNew?rowActions('ads',a.id):''}`);
+
+  document.querySelectorAll('[data-adgoal]').forEach(bt=>bt.onclick=()=>{
+    document.querySelectorAll('[data-adgoal]').forEach(x=>x.classList.toggle('on',x===bt));
+    const k=bt.dataset.adgoal, gg=ADGOAL[k];
+    document.getElementById('adGoal').value=k;
+    document.getElementById('adResLbl').textContent=gg.lbl;
+    document.getElementById('adResHint').textContent='đơn vị: '+gg.unit;
+    document.getElementById('adRevBox').style.display=gg.doanhthu?'':'none';
+  });
+  document.getElementById('adSave').onclick=async()=>{
+    if(!V('adName')){toast('Đặt tên cho chiến dịch đã nhé');return;}
+    const row={name:V('adName'),platform:V('adPlat'),channel:V('adCh'),
+      goal:document.getElementById('adGoal').value,owner:V('adOwn'),status:V('adSt'),
+      start:V('adS')||null,end:V('adE')||null,budget:+V('adBud')||0,
+      spent:+V('adSpent')||0,results:+V('adRes')||0,
+      impressions:+V('adImp')||0,clicks:+V('adClk')||0,
+      revenue:+V('adRev')||0,project_id:+V('adProj')||null,
+      note:document.getElementById('adNote').value||null,archived:false};
+    if(isNew) await add('ads',row,'Đã tạo chiến dịch');
+    else await save('ads',a.id,row,'Đã lưu chiến dịch');
   };
+  if(!isNew) bindActions('ads',a.id,a);
 }
 
 /* ═════════ CHỈ SỐ KÊNH ═════════ */
@@ -2388,9 +3128,11 @@ function chSelector(){
       <span class="cd" style="background:var(--ink3)"></span>
       <span><b>Tất cả kênh</b><small style="display:block">${CHANNELS.length} kênh</small></span></button>
     ${CHANNELS.map((c,i)=>{
-      const v=POSTS.filter(p=>p.channel===c.name&&p.status==='Đã đăng').reduce((s,p)=>s+(p.views||0),0);
       const P=PLAT[c.platform]||{};
+      const v=POSTS.filter(p=>p.channel===c.name&&p.status==='Đã đăng').reduce((s,p)=>s+(p.views||0),0);
       return `<button class="chpill ${MCH===c.id?'on':''}" data-mch="${c.id}">
+        ${c.link?`<a class="chopen" href="${esc(c.link)}" target="_blank" rel="noopener"
+          title="Mở ${esc(c.name)}" onclick="event.stopPropagation()">${icon('i-ext')}</a>`:''}
         <span class="cd" style="background:${P.color||CHCOL[i%CHCOL.length]}"></span>
         <span><b>${esc(c.name)}</b><small style="display:block">${esc(c.platform)} · ${kf(v)} view</small></span>
       </button>`;}).join('')}</div>`;
@@ -2594,7 +3336,13 @@ function viewReports(){
                 ${r.items.slice(0,3).map(x=>`<span>${esc(x)}</span>`).join('')}
                 ${r.items.length>3?`<span class="mute">còn ${r.items.length-3} việc nữa</span>`:''}
                 ${r.blocker?`<span class="rbl">${icon('i-alert')}Vướng: ${esc(r.blocker)}</span>`:''}
-              </div>`:'<span style="color:var(--ink3)">Chưa nộp báo cáo</span>'}</td>
+              </div>`:(()=>{const au=viecTrongNgay(r.author,day);
+                return au.length
+                  ? `<div class="preview"><b>${au.length} việc hệ thống đã ghi nhận</b>
+                      ${au.slice(0,3).map(a=>`<span>${esc(a.t)}</span>`).join('')}
+                      ${au.length>3?`<span class="more">còn ${au.length-3} việc nữa</span>`:''}
+                      ${r.author===ME.name?`<button class="todo-b" data-rquick="${esc(day)}">Nộp nhanh</button>`:''}</div>`
+                  : '<span style="color:var(--ink3)">Chưa nộp báo cáo</span>';})()}</td>
             <td><span class="pill ${RST[r.status]}">${esc(r.status)}</span>
               ${r.status==='Chờ duyệt'&&r.reviewer===ME.name
                 ?`<button class="todo-b" style="margin-top:6px" data-rok="${r.id}">Duyệt</button>`:''}</td>
@@ -2613,7 +3361,14 @@ function viewReports(){
         ${r.items.slice(0,3).map(x=>`<div class="ritem">${esc(x)}</div>`).join('')}
         ${r.items.length>3?`<div class="ritem more">còn ${r.items.length-3} việc nữa…</div>`:''}
         ${r.blocker?`<div class="rblock">${icon('i-alert')}Vướng: ${esc(r.blocker)}</div>`:''}</div>`
-        :`<div class="rcard-b"><div class="empty" style="padding:14px">Chưa nộp báo cáo</div></div>`}
+        :(()=>{const au=viecTrongNgay(r.author,day);
+          return au.length
+            ? `<div class="rcard-b"><div class="preview">
+                <b>${au.length} việc hệ thống đã ghi nhận</b>
+                ${au.slice(0,3).map(a=>`<span>${esc(a.t)}</span>`).join('')}
+                ${r.author===ME.name?`<button class="todo-b" data-rquick="${esc(day)}">Nộp nhanh</button>`:''}
+              </div></div>`
+            : `<div class="rcard-b"><div class="empty" style="padding:14px">Chưa nộp báo cáo</div></div>`;})()}
       <div class="rcard-f"><span>Người duyệt: <b>${esc(r.reviewer)}</b></span>
         ${r.status==='Chờ duyệt'&&r.reviewer===ME.name?'<span style="color:var(--pri)">Cần bạn duyệt →</span>':''}</div>
     </div>`;}).join('')}</div>`;
@@ -2740,48 +3495,124 @@ function openReport(id){
   on('rvEdit',()=>openReportForm(r));
 }
 
+
+/* ═══════ TỰ TỔNG HỢP VIỆC ĐÃ LÀM TRONG NGÀY ═══════ */
+function viecTrongNgay(who,day){
+  const L=[];
+  const add=(t,src)=>{ if(t&&!L.some(x=>x.t===t)) L.push({t,src}); };
+
+  /* 1. Đầu việc hoàn thành, hạn rơi vào hôm đó */
+  TASKS.filter(t=>(t.owner||'').includes(who)&&tgrp(t)==='Hoàn thành'
+      &&(t.done_at?t.done_at===day:t.due===day))
+    .forEach(t=>add(t.name+' — đã xong','Đầu việc'));
+
+  /* Việc đang làm dở hôm nay cũng nên ghi nhận */
+  TASKS.filter(t=>(t.owner||'').includes(who)&&t.status==='Đang làm'
+      &&t.started_at===day)
+    .forEach(t=>add(t.name+' — đang làm','Đầu việc'));
+
+  /* 2. Bài đăng lên sóng hôm đó */
+  POSTS.filter(p=>p.writer===who&&p.status==='Đã đăng'&&p.pub_date===day)
+    .forEach(p=>add(p.title+' — đã đăng lên '+(p.channel||'kênh'),'Bài đăng'));
+
+  /* 3. Quay xong hôm đó */
+  POSTS.filter(p=>p.filmer===who&&p.film_done===day)
+    .forEach(p=>add('Quay: '+p.title+' — đã bàn giao Editor','Quay video'));
+
+  /* 4. Bắt đầu quay hôm đó mà chưa xong */
+  POSTS.filter(p=>p.filmer===who&&p.film_started===day&&p.film_done!==day)
+    .forEach(p=>add('Quay: '+p.title+' — đang thực hiện','Quay video'));
+
+  /* 5. Thiết kế xong hôm đó */
+  POSTS.filter(p=>p.editor===who&&p.design_done===day)
+    .forEach(p=>add(p.title+' — làm xong ấn phẩm, đã gửi duyệt','Thiết kế'));
+
+  /* 6. Nhận việc thiết kế hôm đó */
+  POSTS.filter(p=>p.editor===who&&p.design_started===day&&p.design_done!==day)
+    .forEach(p=>add(p.title+' — đang dựng/thiết kế','Thiết kế'));
+
+  /* 7. Bàn giao brief hôm đó */
+  POSTS.filter(p=>p.handoff_by===who&&p.handoff_at===day)
+    .forEach(p=>add(p.title+' — đã gửi brief cho '+(p.editor||'thiết kế'),'Bàn giao'));
+
+  /* 8. Leader: bài đã duyệt */
+  if((MEMBERS.find(m=>m.name===who)||{}).kind==='leader'){
+    const n=POSTS.filter(p=>p.approved===who&&!DONE.includes(p.status)).length;
+    if(n) add('Duyệt '+n+' nội dung và ấn phẩm trong ngày','Duyệt');
+  }
+  return L;
+}
+/* Nhóm nguồn để hiện nhãn màu */
+const SRCCOL={'Đầu việc':'s-gray','Bài đăng':'s-teal','Quay video':'s-blue',
+  'Thiết kế':'s-pink','Bàn giao':'s-amber','Duyệt':'s-green'};
+
 function openReportForm(r){
   const day=r?r.date:(RDAY||iso(D0()));
   const mine=r||REPORTS.find(x=>x.author===ME.name&&x.date===day);
-  /* gợi ý từ việc đã hoàn thành hôm nay */
-  const sug=[...TASKS.filter(t=>(t.owner||'').includes(ME.name)&&tgrp(t)==='Hoàn thành').slice(-4).map(t=>t.name),
-    ...POSTS.filter(p=>holds(p,ME.name)||p.writer===ME.name).slice(-3)
-      .map(p=>p.title+' — '+p.status)];
-  const items=(mine&&mine.items&&mine.items.length)?mine.items:[''];
+  const daNop=mine&&mine.items&&mine.items.length;
+
+  /* Hệ thống tự tổng hợp việc đã làm — khỏi gõ tay */
+  const auto=viecTrongNgay(ME.name,day);
+  /* Việc đã có trong báo cáo cũ mà hệ thống không biết (người dùng tự thêm) */
+  const themTay=daNop?mine.items.filter(x=>!auto.some(a=>a.t===x)):[];
+  const daChon=daNop?mine.items:auto.map(a=>a.t);
+
+  const dong=(v,tick,src)=>`<div class="rfrow2 ${tick?'on':''}">
+    <label class="rfck"><input type="checkbox" class="rfc" ${tick?'checked':''}><span></span></label>
+    <input type="text" class="fld rfi" value="${esc(v)}">
+    ${src?`<span class="pill pill-s ${SRCCOL[src]||'s-gray'}">${esc(src)}</span>`:''}
+    <button class="icobtn rfdel">${icon('i-x')}</button></div>`;
+
   openDrawer(`<div class="dr-code">Báo cáo ngày ${fdate2(day)}</div>
-    <div class="dr-title">${mine&&mine.items&&mine.items.length?'Sửa báo cáo':'Nộp báo cáo hôm nay'}</div>
-    <div class="dr-meta">Liệt kê việc đã hoàn thành. Người duyệt: <b>${esc((MEMBERS.find(m=>m.name===ME.name)||{}).manager||'Công Tuân')}</b></div>
-    <div class="dr-lab">Việc đã hoàn thành</div>
-    <div id="rfList">${items.map((x,i)=>`<div class="rfrow">
-      <input type="text" class="fld rfi" value="${esc(x)}" placeholder="Ví dụ: Dựng video teaser — đã gửi duyệt">
-      <button class="icobtn rfdel">${icon('i-x')}</button></div>`).join('')}</div>
-    <button class="btn btn-gh btn-sm" id="rfAdd" style="margin-top:8px">${icon('i-plus')}Thêm dòng</button>
-    ${sug.length?`<div class="dr-lab">Gợi ý từ hệ thống</div>
-      <div class="sugs">${sug.map(x=>`<button class="sug" data-sug="${esc(x)}">+ ${esc(x)}</button>`).join('')}</div>`:''}
+    <div class="dr-title">${daNop?'Sửa báo cáo':'Báo cáo hôm nay'}</div>
+    <div class="dr-meta">Người duyệt: <b>${esc((MEMBERS.find(m=>m.name===ME.name)||{}).manager||'Công Tuân')}</b></div>
+
+    ${auto.length?`<div class="autobox">
+      <span class="ab-i">${icon('i-check')}</span>
+      <span><b>Hệ thống đã ghi nhận ${auto.length} việc bạn làm hôm nay</b>
+        <p>Bỏ tick dòng nào không muốn đưa vào báo cáo. Thêm dòng nếu có việc ngoài hệ thống.</p></span>
+    </div>`:`<div class="autobox mute">
+      <span class="ab-i">${icon('i-alert')}</span>
+      <span><b>Hôm nay hệ thống chưa ghi nhận việc nào của bạn</b>
+        <p>Việc chỉ được ghi nhận khi bạn đánh dấu hoàn thành trong hệ thống.
+        Ghi tay bên dưới nếu có việc ngoài luồng.</p></span>
+    </div>`}
+
+    <div class="dr-lab">Việc đã làm hôm nay</div>
+    <div id="rfList">
+      ${auto.map(a=>dong(a.t,daChon.includes(a.t),a.src)).join('')}
+      ${themTay.map(x=>dong(x,true,null)).join('')}
+      ${(!auto.length&&!themTay.length)?dong('',true,null):''}
+    </div>
+    <button class="btn btn-gh btn-sm" id="rfAdd" style="margin-top:8px">${icon('i-plus')}Thêm việc ngoài hệ thống</button>
+
     <div class="dr-lab">Vướng mắc (nếu có)</div>
     <textarea id="rfBlock" placeholder="Đang chờ ai, thiếu gì, cần hỗ trợ gì…">${esc(mine?mine.blocker||'':'')}</textarea>
     <div class="dr-lab">Kế hoạch ngày mai</div>
     <textarea id="rfPlan" placeholder="Dự định làm gì tiếp">${esc(mine?mine.plan||'':'')}</textarea>
-    <button class="btn btn-pri btn-full" id="rfSave">${icon('i-send')}Gửi cho người duyệt</button>`);
+    <button class="btn btn-pri btn-full" id="rfSave">${icon('i-send')}
+      ${daNop?'Cập nhật báo cáo':'Gửi cho người duyệt'}</button>`);
+
+  document.querySelectorAll('.rfc').forEach(c=>c.onchange=()=>
+    c.closest('.rfrow2').classList.toggle('on',c.checked));
   const relist=()=>{document.querySelectorAll('.rfdel').forEach(b=>b.onclick=()=>{
-    const rows=document.querySelectorAll('.rfrow');
-    if(rows.length>1) b.closest('.rfrow').remove();});};
+    const rows=document.querySelectorAll('.rfrow2');
+    if(rows.length>1) b.closest('.rfrow2').remove();});};
   relist();
   document.getElementById('rfAdd').onclick=()=>{
     document.getElementById('rfList').insertAdjacentHTML('beforeend',
-      `<div class="rfrow"><input type="text" class="fld rfi" placeholder="Việc đã làm…">
+      `<div class="rfrow2 on"><label class="rfck"><input type="checkbox" class="rfc" checked><span></span></label>
+       <input type="text" class="fld rfi" placeholder="Việc làm ngoài hệ thống…">
        <button class="icobtn rfdel">${icon('i-x')}</button></div>`);
-    relist();};
-  document.querySelectorAll('[data-sug]').forEach(b=>b.onclick=()=>{
-    const empty=[...document.querySelectorAll('.rfi')].find(i=>!i.value.trim());
-    if(empty) empty.value=b.dataset.sug;
-    else{document.getElementById('rfList').insertAdjacentHTML('beforeend',
-      `<div class="rfrow"><input type="text" class="fld rfi" value="${esc(b.dataset.sug)}">
-       <button class="icobtn rfdel">${icon('i-x')}</button></div>`); relist();}
-    b.classList.add('used');});
+    relist();
+    document.querySelectorAll('.rfc').forEach(c=>c.onchange=()=>
+      c.closest('.rfrow2').classList.toggle('on',c.checked));
+    const l=[...document.querySelectorAll('.rfi')]; l[l.length-1].focus();};
   document.getElementById('rfSave').onclick=async()=>{
-    const its=[...document.querySelectorAll('.rfi')].map(i=>i.value.trim()).filter(Boolean);
-    if(!its.length){toast('Ghi ít nhất một việc đã làm');return;}
+    const its=[...document.querySelectorAll('.rfrow2')]
+      .filter(row=>row.querySelector('.rfc').checked)
+      .map(row=>row.querySelector('.rfi').value.trim()).filter(Boolean);
+    if(!its.length){toast('Chọn hoặc ghi ít nhất một việc đã làm');return;}
     const row={date:day,author:ME.name,reviewer:(MEMBERS.find(m=>m.name===ME.name)||{}).manager||'Công Tuân',
       status:'Chờ duyệt',items:its,blocker:V('rfBlock')||null,plan:V('rfPlan')||null,note:null};
     const dup=REPORTS.find(x=>x.author===ME.name&&x.date===day&&(!mine||x.id!==mine.id));
@@ -3369,7 +4200,8 @@ function viewSetup(){
 
     <div class="panel"><div class="panel-h"><b>${icon('i-signal')} Kênh đang vận hành</b>
       <small>${CHANNELS.length} kênh · bấm để cấu hình</small></div>
-      <div class="tlist">${CHANNELS.map(c=>{const P=PLAT[c.platform]||{};
+      <div class="tlist">${CHANNELS.map(c=>{
+        const P=PLAT[c.platform]||{};
         return `<div class="titem" data-chedit="${c.id}">
         <span class="cd" style="width:9px;height:9px;border-radius:50%;background:${P.color||'#999'}"></span>
         <div class="tn"><b>${esc(c.name)}</b><small>${esc(c.platform)} · ${esc(c.owner_content||'')}
@@ -3542,7 +4374,7 @@ function giaoViec(who){
 }
 
 /* ═════════ LEADER TEAM — bàn điều hành tổng ═════════ */
-let LTAB='now';
+let LTAB='now', LWHO='all', LQ='';
 
 function viewLeader(){
   if(!(ME&&(ME.kind==='leader'||can('post.approve'))))
@@ -3550,9 +4382,9 @@ function viewLeader(){
       Mục này dành cho Leader.<br>Vai trò <b>${esc(myRole())}</b> không xem được.</div></div>`;
 
   const openP=POSTS.filter(p=>!DONE.includes(p.status));
-  const dND=POSTS.filter(p=>norm(p.status)==='Chờ duyệt nội dung');
-  const dAP=POSTS.filter(p=>norm(p.status)==='Chờ duyệt ấn phẩm');
-  const yc=APPROVALS.filter(a=>a.approver===ME.name&&a.status==='Chờ duyệt');
+  const dND0=POSTS.filter(p=>norm(p.status)==='Chờ duyệt nội dung');
+  const dAP0=POSTS.filter(p=>norm(p.status)==='Chờ duyệt ấn phẩm');
+  const yc0=APPROVALS.filter(a=>a.approver===ME.name&&a.status==='Chờ duyệt');
   const lateP=openP.filter(latePost), lateT=TASKS.filter(lateTask);
   const cap=+(SET.load_max||14);
   const td=iso(D0());
@@ -3589,43 +4421,106 @@ function viewLeader(){
   const adRev=ADS.reduce((s,a)=>s+(a.revenue||0),0);
   const roasAll=adSpent?adRev/adSpent:0;
 
+  /* ══ Bộ lọc theo người ══ */
+  const chuThe=p=>[p.writer,p.editor,p.filmer].filter(Boolean);
+  const hopLoc=(x,ai)=>{
+    if(LQ){ const t=((x.title||x.name||'')+' '+(x.channel||'')+' '+(ai||[]).join(' ')).toLowerCase();
+      if(!t.includes(LQ)) return false; }
+    if(LWHO==='all') return true;
+    return (ai||[]).includes(LWHO);
+  };
+  /* đếm số mục chờ Leader xử lý theo từng người */
+  const demTheoNguoi=n=>{
+    const a=POSTS.filter(p=>F(p.status).hold==='leader'&&chuThe(p).includes(n)).length;
+    const b=APPROVALS.filter(x=>x.approver===ME.name&&x.status==='Chờ duyệt'&&x.requester===n).length;
+    return a+b;
+  };
+  const tongCho=MEMBERS.reduce((s,m)=>s+demTheoNguoi(m.name),0);
+  const locBar=`<div class="lfilter">
+    <div class="whoseg">
+      <button class="wseg ${LWHO==='all'?'on':''}" data-lwho="all" style="--wc:#5A5A72">
+        ${icon('i-users')}<span>Tất cả</span>
+        ${tongCho?`<i class="wn">${tongCho}</i>`:''}</button>
+      ${MEMBERS.filter(m=>m.name!==ME.name).map(m=>{
+        const n=demTheoNguoi(m.name);
+        return `<button class="wseg ${LWHO===m.name?'on':''}" data-lwho="${esc(m.name)}"
+          style="--wc:${(ROLES.find(r=>r.name===m.role)||{}).color||'#6D4AFF'}">
+          ${avat(m.name)}<span>${esc(m.short_name||m.name.split(' ').slice(-1)[0])}</span>
+          ${n?`<i class="wn">${n}</i>`:''}</button>`;}).join('')}
+    </div>
+    <div class="lsearch">${icon('i-search')}
+      <input type="text" id="lq" placeholder="Tìm theo tên bài hoặc kênh…" value="${esc(LQ)}">
+      ${LQ?`<button class="icobtn" id="lqx">${icon('i-x')}</button>`:''}</div>
+  </div>`;
+
   /* ══ TAB 1 · CẦN XỬ LÝ NGAY ══ */
   const prow=(p,loai)=>browRow(p,{btns:loai==='nd'
     ? `<button class="brow-btn" data-ok-nd="${p.id}">Duyệt</button>`
     : `<button class="brow-btn" data-ok-ap="${p.id}">Duyệt &amp; cho đăng</button>`});
 
-  const canXuLy=`
+  const dND=dND0.filter(p=>hopLoc(p,chuThe(p)));
+  const dAP=dAP0.filter(p=>hopLoc(p,chuThe(p)));
+  const yc=yc0.filter(a=>hopLoc(a,[a.requester]));
+  const lateP2=lateP.filter(p=>hopLoc(p,chuThe(p)));
+  const lateT2=lateT.filter(t=>hopLoc(t,[t.owner]));
+  const chuaNop2=LWHO==='all'?chuaNop:chuaNop.filter(m=>m.name===LWHO);
+
+  /* Tổng quan: mỗi vị trí đang có bao nhiêu mục chờ Leader */
+  const viTri=[
+    {k:'writer',t:'Content',ic:'i-pen',c:'blue',
+     l:dND0,mo:'bài chờ duyệt nội dung'},
+    {k:'film',t:'Quay video',ic:'i-cam',c:'teal',
+     l:POSTS.filter(p=>norm(p.status)==='Đang quay'&&p.film_date&&dd(p.film_date)<0),
+     mo:'buổi quay quá hẹn'},
+    {k:'design',t:'Thiết kế',ic:'i-brush',c:'pink',
+     l:dAP0,mo:'ấn phẩm chờ duyệt'},
+    {k:'other',t:'Yêu cầu khác',ic:'i-bell',c:'amber',
+     l:yc0,mo:'ngân sách, nội dung, in ấn'},
+  ];
+  const tongQuanViTri=`<div class="vtgrid">${viTri.map(v=>`
+    <button class="vt ${v.l.length?'has':''} s-${v.c}" data-vtjump="${v.k}">
+      <span class="vt-i">${icon(v.ic)}</span>
+      <span class="vt-m"><b>${v.l.length}</b><span>${esc(v.t)}</span></span>
+      <span class="vt-f">${v.l.length?esc(v.mo):'không có gì chờ'}</span>
+      ${v.l.length?`<span class="vt-who">${[...new Set(v.l.flatMap(x=>
+        x.requester?[x.requester]:chuThe(x)))].slice(0,4)
+        .map(n=>`<span title="${esc(n)}">${avat(n)}</span>`).join('')}</span>`:''}
+    </button>`).join('')}</div>`;
+
+  const canXuLy=tongQuanViTri+locBar+`
     ${dND.length||dAP.length||yc.length?'':`<div class="panel"><div class="empty">
-      ${icon('i-check')}<br><br>Không có gì chờ bạn duyệt.</div></div>`}
-    ${dND.length?`<div class="panel"><div class="panel-h">
+      ${icon('i-check')}<br><br>${LWHO==='all'&&!LQ?'Không có gì chờ bạn duyệt.'
+        :`Không có mục nào chờ duyệt${LWHO!=='all'?' của '+esc(LWHO):''}${LQ?` khớp “${esc(LQ)}”`:''}.
+          <br><span style="font-size:11.5px">Bấm “Tất cả” để xem toàn bộ.</span>`}</div></div>`}
+    ${dND.length?`<div class="panel" data-sec="nd"><div class="panel-h">
       <b>${icon('i-pen')} Content chờ bạn duyệt nội dung</b><small>${dND.length}</small></div>
       <div>${dND.map(p=>prow(p,'nd')).join('')}</div></div>`:''}
-    ${dAP.length?`<div class="panel"><div class="panel-h">
+    ${dAP.length?`<div class="panel" data-sec="ap"><div class="panel-h">
       <b>${icon('i-brush')} Thiết kế chờ bạn duyệt ấn phẩm</b><small>${dAP.length}</small></div>
       <div>${dAP.map(p=>prow(p,'ap')).join('')}</div></div>`:''}
-    ${yc.length?`<div class="panel"><div class="panel-h">
+    ${yc.length?`<div class="panel" data-sec="yc"><div class="panel-h">
       <b>${icon('i-bell')} Yêu cầu khác</b><small>${yc.length}</small></div>
       <div>${yc.map(a=>`<div class="qrow">
         <span class="pill pill-s s-gray">${esc(a.kind)}</span>
         <span class="qt" data-apr="${a.id}"><b>${esc(a.title)}</b>
           <small>${esc(a.requester)}${a.amount?' · '+mshort(a.amount):''}</small></span>
         <span class="qr"><button class="todo-b" data-aok="${a.id}">Duyệt</button></span></div>`).join('')}</div></div>`:''}
-    ${lateP.length||lateT.length?`<div class="panel"><div class="panel-h">
+    ${lateP2.length||lateT2.length?`<div class="panel"><div class="panel-h">
       <b style="color:var(--red)">${icon('i-alert')} Đang quá hạn</b>
-      <small>${lateP.length} bài · ${lateT.length} đầu việc</small></div>
-      <div>${[...lateP.slice(0,5).map(p=>`<div class="qrow">
+      <small>${lateP2.length} bài · ${lateT2.length} đầu việc</small></div>
+      <div>${[...lateP2.slice(0,5).map(p=>`<div class="qrow">
         <span class="pill ${F(p.status).cls}">${esc(norm(p.status))}</span>
         <span class="qt" data-post="${p.id}"><b>${esc(p.title)}</b>
           <small>${esc(holder(p)||'')} đang giữ · ${esc(p.channel||'')}</small></span>
         <span class="qr">${dueChip(p.pub_date,p.pub_time,false)}</span></div>`),
-        ...lateT.slice(0,5).map(t=>`<div class="qrow">
+        ...lateT2.slice(0,5).map(t=>`<div class="qrow">
         <span class="pill ${tcls(t)}">${esc(t.status)}</span>
         <span class="qt" data-task="${t.id}"><b>${esc(t.name)}</b>
           <small>${esc(t.owner||'')} · ${esc(t.area||'')}</small></span>
         <span class="qr">${dueChip(t.due,null,false)}</span></div>`)].join('')}</div></div>`:''}
-    ${chuaNop.length?`<div class="panel"><div class="panel-h">
-      <b>${icon('i-doc')} Chưa nộp báo cáo hôm nay</b><small>${chuaNop.length}/${MEMBERS.length}</small></div>
-      <div class="panel-b"><div class="whochips">${chuaNop.map(m=>
+    ${chuaNop2.length?`<div class="panel"><div class="panel-h">
+      <b>${icon('i-doc')} Chưa nộp báo cáo hôm nay</b><small>${chuaNop2.length}/${MEMBERS.length}</small></div>
+      <div class="panel-b"><div class="whochips">${chuaNop2.map(m=>
         `<span class="whochip" data-who="${esc(m.name)}">${avat(m.name)}${esc(m.name)}</span>`).join('')}</div>
         <div style="font-size:11.5px;color:var(--ink3);margin-top:9px">
           Nhắc nhẹ cuối ngày — nếp báo cáo là thứ giữ cho mọi số liệu trong hệ thống đáng tin.</div>
@@ -3772,7 +4667,7 @@ function viewLeader(){
         ||'<div class="empty">Chưa ghi nhận rủi ro nào</div>'}</div></div>`;
 
   const body={now:canXuLy,team:doiNgu,sx:sanXuat,tien:tien}[LTAB]||canXuLy;
-  const canN=dND.length+dAP.length+yc.length;
+  const canN=dND0.length+dAP0.length+yc0.length;
 
   return ph('Leader Team',
     'Mọi thứ Leader cần theo dõi trong một chỗ — duyệt, đội ngũ, guồng sản xuất và tiền',
@@ -3810,7 +4705,8 @@ const MENU_LIST=[
   {g:'Vị trí công việc',items:[
     ['work','Content Marketing','i-pen',1],
     ['d-edit','Editor Video','i-film',1],
-    ['d-design','Designer','i-brush',1]]},
+    ['d-design','Designer','i-brush',1],
+    ['d-film','Quay Video','i-cam',1]]},
   {g:'Nội dung & kênh',items:[
     ['cal','Lịch đăng','i-cal',1],
     ['channels','Kênh & chỉ số','i-signal',1]]},
@@ -3821,6 +4717,7 @@ const MENU_LIST=[
     ['risks','Rủi ro','i-alert',0]]},
   {g:'Ngân sách & quảng cáo',items:[
     ['ads','Quảng cáo','i-chart',0],
+    ['promo','Khuyến mãi sàn','i-tag',0],
     ['budget','Ngân sách','i-money',0]]},
   {g:'Đội ngũ',items:[
     ['perf','Hiệu suất','i-target',0],
@@ -4458,6 +5355,8 @@ function bindAll(){
     const key=code.replace(/^(qk|wk)-/,'');
     if(key==='give'){ handoffForm(p); return; }
     const M={
+      fstart:[{film_started:TD,filmer:p.filmer||ME.name},'Đã nhận quay'],
+      fdone: [{status:'Đang thiết kế',film_done:TD},'Đã bàn giao Editor dựng'],
       take:  [{design_started:TD,editor:p.editor||ME.name},'Đã nhận việc — bắt đầu làm'],
       send:  [{status:'Chờ duyệt ấn phẩm',design_done:TD},'Đã gửi '+LEADER()+' duyệt'],
       tosub: [{status:'Chờ duyệt nội dung'},'Đã gửi '+LEADER()+' duyệt nội dung'],
@@ -4507,6 +5406,28 @@ function bindAll(){
   document.querySelectorAll('[data-chtab]').forEach(b=>b.onclick=()=>{CHTAB=b.dataset.chtab;MCH=0;render();});
   on('[data-mch]',e=>{MCH=+e.dataset.mch;CHTAB='metric';render();});
   on('[data-fstage]',()=>go('work'));
+  on('[data-bkpi]',e=>bkpiDrawer(e.dataset.bkpi));
+  on('[data-sch]',e=>{SCH=+e.dataset.sch;render();});
+  on('[data-metric]',e=>chiSoBai(+e.dataset.metric));
+  document.querySelectorAll('[data-pztab]').forEach(b=>b.onclick=()=>{PZTAB=b.dataset.pztab;render();});
+  on('[data-promo]',e=>{const p=PROMOS.find(x=>x.id===+e.dataset.promo); if(p) editPromo(p);});
+  if(b('pzNew')) b('pzNew').onclick=()=>editPromo(null);
+  if(b('pzSet')) b('pzSet').onclick=()=>phiSanForm();
+  on('[data-open]',e=>{window.open(e.dataset.open,'_blank','noopener');});
+  on('[data-rquick]',async e=>{
+    const day=e.dataset.rquick;
+    const au=viecTrongNgay(ME.name,day);
+    if(!au.length){toast('Chưa có việc nào để nộp');return;}
+    await add('reports',{date:day,author:ME.name,
+      reviewer:(MEMBERS.find(m=>m.name===ME.name)||{}).manager||'Công Tuân',
+      status:'Chờ duyệt',items:au.map(a=>a.t),blocker:null,plan:null,note:null,archived:false},
+      'Đã nộp báo cáo với '+au.length+' việc');});
+  on('[data-stdel]',async e=>{
+    if(!confirm('Xoá mốc số liệu này?'))return;
+    await sb.from('channel_stats').delete().eq('id',+e.dataset.stdel);
+    toast('Đã xoá'); await loadAll();});
+  if(b('scNew')) b('scNew').onclick=()=>capNhatSoLieu(SCH||CHANNELS[0].id);
+  if(b('scAdd')) b('scAdd').onclick=()=>capNhatSoLieu(SCH);
   on('[data-giao]',e=>giaoViec(e.dataset.giao));
   on('[data-tstart]',e=>save('tasks',+e.dataset.tstart,{status:'Đang làm'},'Đã bắt đầu làm'));
   on('[data-ok-nd]',e=>save('posts',+e.dataset.okNd,
@@ -4520,6 +5441,17 @@ function bindAll(){
   document.querySelectorAll('[data-astab]').forEach(b=>b.onclick=()=>{ASTAB=b.dataset.astab;render();});
   document.querySelectorAll('[data-adtab]').forEach(b=>b.onclick=()=>{ADTAB=b.dataset.adtab;render();});
   document.querySelectorAll('[data-ltab]').forEach(b=>b.onclick=()=>{LTAB=b.dataset.ltab;render();});
+  on('[data-lwho]',e=>{LWHO=e.dataset.lwho;render();});
+  on('[data-vtjump]',e=>{
+    const k=e.dataset.vtjump;
+    const el=document.querySelector(k==='writer'?'[data-sec="nd"]':k==='design'?'[data-sec="ap"]'
+      :k==='other'?'[data-sec="yc"]':'[data-sec="quay"]');
+    if(el) el.scrollIntoView({behavior:'smooth',block:'start'});
+    else toast('Không có mục nào ở nhóm này');});
+  if(b('lq')) b('lq').oninput=e=>{LQ=e.target.value.toLowerCase();
+    const v=e.target.value; render();
+    const n=document.getElementById('lq'); if(n){n.focus();n.setSelectionRange(v.length,v.length);}};
+  if(b('lqx')) b('lqx').onclick=()=>{LQ='';render();};
   if(b('ltGiao')) b('ltGiao').onclick=()=>go('assign');
   if(b('ltAdmin')) b('ltAdmin').onclick=()=>go('admin');
   on('[data-pin]',e=>pinForm(+e.dataset.pin));
@@ -4649,6 +5581,11 @@ document.querySelector('.drawer-bg').onclick=closeDrawer;
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeDrawer();});
 
 async function save(tbl,id,patch,msg){
+  /* Ghi lại ngày thực sự hoàn thành để báo cáo tự tổng hợp đúng */
+  if(tbl==='tasks'&&patch.status&&tgrp({status:patch.status})==='Hoàn thành') patch.done_at=iso(new Date());
+  if(tbl==='tasks'&&patch.status&&tgrp({status:patch.status})!=='Hoàn thành') patch.done_at=null;
+  if(tbl==='tasks'&&patch.status==='Đang làm'){const cu=TASKS.find(x=>x.id===id);
+    if(cu&&!cu.started_at) patch.started_at=iso(new Date());}
   const {error}=await sb.from(tbl).update({...patch,updated_by:ME.name}).eq('id',id);
   if(error){toast('Lỗi: '+error.message);return false;}
   toast(msg); closeDrawer(); await loadAll(); return true;
@@ -4681,6 +5618,7 @@ function openPost(id){
   const h=holder(p), late=latePost(p);
   const hrs=hoursLeft(p.pub_date,p.pub_time);
   const meD=(MEMBERS.find(m=>m.name===ME.name)||{}).kind==='design';
+  const meIsFilm=(MEMBERS.find(m=>m.name===ME.name)||{}).kind==='film';
 
   /* Một hành động chính duy nhất, đúng bước tiếp theo của người đang xem */
   let main=null;
@@ -4693,12 +5631,16 @@ function openPost(id){
   const canAP=can('design.approve')&&scOK('design.approve',p.editor);
   if(isW&&['Đang viết','Cần sửa nội dung'].includes(st)) main=['pkToLeader','Gửi Leader duyệt nội dung','i-send'];
   else if(canND&&st==='Chờ duyệt nội dung') main=['pkOkND','Duyệt nội dung','i-check'];
+  else if(meIsFilm&&st==='Đang quay'&&!p.film_started) main=['pkFilmStart','Nhận quay — bắt đầu','i-hand'];
+  else if(meIsFilm&&st==='Đang quay'&&p.film_started) main=['pkFilmDone','Quay xong — bàn giao Editor','i-check'];
   else if(isW&&st==='Đang thiết kế'&&!p.editor) main=['pkGive','Chọn người thiết kế','i-send'];
   else if(meD&&st==='Đang thiết kế'&&!p.editor) main=['pkClaim','Tôi nhận việc này','i-hand'];
   else if(isE&&st==='Đang thiết kế'&&!p.design_started) main=['pkTake','Bắt đầu làm','i-hand'];
   else if(isE&&['Đang thiết kế','Cần sửa ấn phẩm'].includes(st)) main=['pkSend','Làm xong — gửi Leader duyệt','i-check'];
   else if(canAP&&st==='Chờ duyệt ấn phẩm') main=['pkOkAP','Duyệt — cho đăng bài','i-check'];
   else if(isW&&st==='Chờ đăng') main=['pkPub','Đã đăng lên nền tảng','i-check'];
+  else if(st==='Đã đăng'&&p.pub_date&&Math.abs(dd(p.pub_date))>=1)
+    main=['pkMetric',p.measured_at?'Cập nhật lại chỉ số':'Nhập chỉ số bài đăng','i-chart'];
 
   /* Nút phụ */
   let sub='';
@@ -4706,9 +5648,13 @@ function openPost(id){
   if(canND&&st==='Chờ duyệt nội dung'){ sub+=sb2('pkAssign','Duyệt & giao thẳng thiết kế','i-send');
     sub+=sb2('pkFixND','Trả lại Content sửa','i-loop'); }
   if(canAP&&st==='Chờ duyệt ấn phẩm') sub+=sb2('pkFixAP','Trả lại thiết kế sửa','i-loop');
+  if(st==='Đang quay'&&(canND||p.writer===ME.name)) sub+=sb2('pkFilmEdit','Sửa thông tin buổi quay','i-cam');
   if(meD&&['Đang thiết kế','Cần sửa ấn phẩm'].includes(st)) sub+=sb2('pkSwap','Chuyển cho người khác','i-share');
 
-  const steps=['Đang viết','Chờ duyệt nội dung','Đang thiết kế','Chờ duyệt ấn phẩm','Chờ đăng','Đã đăng'];
+  const canQ=p.need_film||/video|clip|reels|short/i.test(p.fmt||'')||norm(p.status)==='Đang quay';
+  const steps=canQ
+    ? ['Đang viết','Chờ duyệt nội dung','Đang quay','Đang thiết kế','Chờ duyệt ấn phẩm','Chờ đăng','Đã đăng']
+    : ['Đang viết','Chờ duyệt nội dung','Đang thiết kế','Chờ duyệt ấn phẩm','Chờ đăng','Đã đăng'];
   const cur=steps.indexOf(st);
 
   openDrawer(`
@@ -4732,10 +5678,19 @@ function openPost(id){
     ${main?`<button class="bigact" id="${main[0]}">${icon(main[2])}<span>${main[1]}</span></button>`:''}
     ${sub?`<div class="subacts">${sub}</div>`:''}
 
-    ${p.status==='Đã đăng'?`<div class="mtr" style="margin-top:16px">
-      <div><span>Lượt xem</span><b>${kf(p.views)}</b></div><div><span>Tương tác</span><b>${kf(p.eng)}</b></div>
-      <div><span>Chia sẻ</span><b>${nf(p.shares)}</b></div><div><span>Lưu</span><b>${nf(p.saves)}</b></div></div>`:''}
+    ${p.status==='Đã đăng'?`
+      <div class="dr-lab">Chỉ số${p.measured_at?` · đo ngày ${fdate(p.measured_at)}`:' · chưa đo'}</div>
+      <div class="mtr">
+        <div><span>Lượt xem</span><b>${p.views!=null?kf(p.views):'—'}</b></div>
+        <div><span>Tương tác</span><b>${p.eng!=null?kf(p.eng):'—'}</b></div>
+        <div><span>Tỉ lệ TT</span><b>${p.views&&p.eng?(p.eng/p.views*100).toFixed(1)+'%':'—'}</b></div>
+        <div><span>Chia sẻ</span><b>${p.shares!=null?nf(p.shares):'—'}</b></div>
+        <div><span>Lưu</span><b>${p.saves!=null?nf(p.saves):'—'}</b></div>
+        <div><span>Bình luận</span><b>${p.comments!=null?nf(p.comments):'—'}</b></div>
+      </div>
+      ${p.measure_note?`<div class="dr-txt" style="margin-top:9px">${esc(p.measure_note)}</div>`:''}`:''}
 
+    ${filmInfo(p)}
     ${briefBlock(p)}
     ${p.script?`<div class="dr-lab">Nội dung / kịch bản</div><div class="dr-txt">${esc(p.script)}</div>`:''}
 
@@ -4754,8 +5709,15 @@ function openPost(id){
   const TD=iso(new Date());
   const on=(i,fn)=>{const e=document.getElementById(i);if(e)e.onclick=fn;};
   on('pkToLeader',()=>save('posts',id,{status:'Chờ duyệt nội dung'},'Đã gửi '+LEADER()+' duyệt nội dung'));
-  on('pkOkND',()=>save('posts',id,{status:'Đang thiết kế',editor:null,design_started:null,approved:ME.name},
-    'Đã duyệt nội dung — '+(p.writer||'Content')+' chọn người thiết kế'));
+  on('pkOkND',()=>{
+    const canQuay=p.need_film||/video|clip|reels|short/i.test(p.fmt||'');
+    if(canQuay){ closeDrawer(); filmForm(p); }
+    else save('posts',id,{status:'Đang thiết kế',editor:null,design_started:null,approved:ME.name},
+      'Đã duyệt nội dung — '+(p.writer||'Content')+' chọn người thiết kế');});
+  on('pkFilmEdit',()=>{closeDrawer();filmForm(p);});
+  on('pkFilmStart',()=>save('posts',id,{filmer:ME.name,film_started:iso(new Date())},'Đã nhận quay'));
+  on('pkFilmDone',()=>save('posts',id,{status:'Đang thiết kế',film_done:iso(new Date()),
+    editor:p.editor||null},'Đã bàn giao Editor dựng'));
   on('pkAssign',()=>{closeDrawer();handoffForm(p);});
   on('pkFixND',()=>save('posts',id,{status:'Cần sửa nội dung'},'Đã trả lại '+(p.writer||'Content')));
   on('pkGive',()=>handoffForm(p));
@@ -4767,6 +5729,7 @@ function openPost(id){
     'Đã duyệt — chuyển '+(p.writer||'Content')+' đăng bài'));
   on('pkFixAP',()=>save('posts',id,{status:'Cần sửa ấn phẩm'},'Đã trả lại '+(p.editor||'thiết kế')));
   on('pkPub',()=>save('posts',id,{status:'Đã đăng'},'Đã đánh dấu đăng lên nền tảng'));
+  on('pkMetric',()=>{closeDrawer();chiSoBai(id);});
   document.querySelectorAll('.stchip[data-st]').forEach(b=>b.onclick=async()=>{
     const nst=b.dataset.st, patch={status:nst};
     if(nst==='Đang thiết kế'&&p.editor&&p.editor!=='Không cần'&&!(p.brief||p.brief_link)){
@@ -4938,9 +5901,23 @@ function openChan(id){
   const c=CHANNELS.find(x=>x.id===id); if(!c) return;
   const all=POSTS.filter(p=>p.channel===c.name), posted=all.filter(p=>p.status==='Đã đăng');
   const v=posted.reduce((s,p)=>s+(p.views||0),0);
-  openDrawer(`<div class="dr-code">${esc(c.platform)}</div><div class="dr-title">${esc(c.name)}</div>
+  const st0=lastStat(c.id);
+  openDrawer(`<div class="dr-code">${esc(c.platform)} · ${esc(CKIND[ckindOf(c)].t)}</div>
+    <div class="dr-title">${esc(c.name)}</div>
     <div class="dr-meta">${esc(c.role||'')}<br>Ưu tiên <b>${esc(c.priority||'')}</b>
       · mục tiêu <b>${c.target_week||0} bài/tuần</b></div>
+    ${(c.link||c.admin_link)?`<div class="chlinks">
+      ${c.link?`<a class="chlink" href="${esc(c.link)}" target="_blank" rel="noopener">
+        <span class="pl-i pl-${esc(c.platform.toLowerCase().replace(/[^a-z]/g,''))}">${icon(picon(c.platform))}</span>
+        <span><b>Mở trên ${esc(c.platform)}</b>
+        <small>${esc(String(c.link).replace(/^https?:\/\//,''))}</small></span>
+        ${icon('i-ext')}</a>`:''}
+      ${c.admin_link?`<a class="chlink adm" href="${esc(c.admin_link)}" target="_blank" rel="noopener">
+        ${icon('i-chart')}<span><b>Trang quản trị</b><small>nơi vào lấy số liệu</small></span></a>`:''}
+    </div>`:`<div class="notice" style="margin-top:12px">
+      <span class="ni">${icon('i-link')}</span>
+      <span><b>Chưa có link kênh</b>
+        <p>Vào Cài đặt bấm sửa kênh này để thêm link, cả phòng bấm một cái là mở được.</p></span></div>`}
     <div class="mtr"><div><span>Follow</span><b>${kf(c.followers)}</b></div>
       <div><span>Đã đăng</span><b>${posted.length}</b></div>
       <div><span>Lượt xem</span><b>${kf(v)}</b></div>
@@ -5295,6 +6272,202 @@ function avatarForm(id){
     save('members',id,{avatar:document.getElementById('avaVal').value||null},'Đã cập nhật ảnh');
 }
 
+
+
+
+/* ═══════ CẬP NHẬT CHỈ SỐ CHO TỪNG BÀI ═══════ */
+const PMETRIC={
+  social:[['views','Lượt xem','Số người đã xem bài'],
+          ['reach','Lượt tiếp cận','Số tài khoản bài chạm tới'],
+          ['eng','Tương tác','Tổng thích + bình luận + chia sẻ + lưu'],
+          ['comments','Bình luận',''],['shares','Chia sẻ',''],['saves','Lượt lưu',''],
+          ['clicks','Nhấp vào link','']],
+  web:[['views','Lượt truy cập',''],['clicks','Lượt nhấp',''],['comments','Bình luận','']],
+  sales:[['views','Lượt xem gian hàng',''],['clicks','Lượt nhấp','']],
+};
+function chiSoBai(id){
+  const p=POSTS.find(x=>x.id===id); if(!p) return;
+  const c=CHANNELS.find(x=>x.name===p.channel)||{};
+  const F2=PMETRIC[ckindOf(c)]||PMETRIC.social;
+  const tuoi=p.pub_date?Math.abs(dd(p.pub_date)):null;
+  const daDo=p.measured_at;
+  openDrawer(`<div class="dr-code">${esc(p.channel||'')}${p.fmt?' · '+esc(p.fmt):''}</div>
+    <div class="dr-title">Cập nhật chỉ số bài đăng</div>
+    <div class="dr-meta">${esc(p.title)}</div>
+
+    <div class="msbox ${daDo?'done':''}">
+      <span class="ms-i">${icon(daDo?'i-check':'i-chart')}</span>
+      <span><b>${p.pub_date?`Đăng ${fdate(p.pub_date)}${tuoi!==null?` · ${tuoi} ngày trước`:''}`:'Chưa rõ ngày đăng'}</b>
+        <p>${daDo
+          ? `Đã đo lần gần nhất ngày ${fdate(daDo)}. Nhập số mới sẽ ghi đè.`
+          : tuoi!==null&&tuoi<1
+            ? 'Bài mới đăng — nên đợi ít nhất 24 giờ rồi hãy đo cho sát.'
+            : 'Lấy số từ trang quản trị của kênh rồi điền vào bên dưới.'}</p></span>
+    </div>
+
+    ${c.link?`<a class="chlink" href="${esc(c.link)}" target="_blank" rel="noopener"
+      style="margin-top:12px">${icon('i-ext')}<span><b>Mở ${esc(c.name)}</b>
+      <small>tìm bài này rồi lấy số về</small></span></a>`:''}
+    <div class="dr-lab">Ngày đo</div>
+    <input type="date" id="msDate" class="fld" value="${daDo||iso(D0())}">
+
+    <div class="dr-lab">Chỉ số</div>
+    <div class="statgrid">${F2.map(([k,lb,hint])=>`
+      <div class="stf"><label>${esc(lb)}</label>
+        <input type="number" id="ms_${k}" class="fld" min="0"
+          value="${p[k]!=null?p[k]:''}" placeholder="0">
+        ${hint?`<small>${esc(hint)}</small>`:(p[k]!=null?`<small>đang lưu: ${kf(p[k])}</small>`:'')}
+      </div>`).join('')}</div>
+
+    <div class="dr-lab">Nhận xét về bài này</div>
+    <textarea id="msNote" placeholder="Ví dụ: hook 3 giây đầu giữ chân tốt, nên làm thêm dạng này">${esc(p.measure_note||'')}</textarea>
+
+    <button class="btn btn-pri btn-full" id="msSave">${icon('i-check')}Lưu chỉ số</button>
+    <div class="permhint" style="margin-top:12px">${icon('i-alert')}
+      <span>Nên đo hai lần: sau 24–48 giờ để biết bài có nổ không,
+      và sau 7 ngày để chốt số cuối. Số này dùng để tính tỉ lệ tương tác của kênh.</span></div>`);
+
+  document.getElementById('msSave').onclick=async()=>{
+    const row={measured_at:V('msDate')||iso(D0()),
+      measure_note:document.getElementById('msNote').value||null};
+    let co=0;
+    F2.forEach(([k])=>{const el=document.getElementById('ms_'+k);
+      if(el&&el.value!==''){ row[k]=+el.value; co++; }});
+    if(!co){toast('Nhập ít nhất một chỉ số');return;}
+    const cu=p.views||0;
+    await save('posts',id,row,
+      row.views&&cu&&row.views>cu ? `Đã lưu — tăng ${kf(row.views-cu)} lượt xem so với lần đo trước`
+      : 'Đã lưu chỉ số bài đăng');
+  };
+}
+
+/* Bài đã đăng cần đo — dùng ở màn Kênh & chỉ số */
+function baiCanDo(){
+  const td=D0();
+  return POSTS.filter(p=>{
+    if(p.status!=='Đã đăng'||!p.pub_date) return false;
+    const tuoi=Math.abs(dd(p.pub_date));
+    if(tuoi<1) return false;                       /* mới đăng, chưa cần đo */
+    if(!p.measured_at) return true;                /* chưa đo lần nào */
+    const cach=Math.abs(dd(p.measured_at));
+    return tuoi<=10 && cach>=5;                    /* bài còn mới mà lâu chưa đo lại */
+  }).sort((a,b)=>b.pub_date.localeCompare(a.pub_date));
+}
+
+/* ─── Lịch quay của bạn quay video ─── */
+function lichQuay(who){
+  const chua=POSTS.filter(p=>norm(p.status)==='Đang quay'
+    &&(p.filmer===who||!p.filmer));
+  if(!chua.length) return `<div class="panel"><div class="empty">${icon('i-cam')}<br><br>
+    Chưa có buổi quay nào được giao.<br>
+    <span style="font-size:11.5px">Khi Leader duyệt nội dung một bài video,
+    yêu cầu quay sẽ hiện ở đây kèm ngày giờ và địa điểm.</span></div></div>`;
+  /* gom theo ngày */
+  const g={};
+  chua.forEach(p=>{const k=p.film_date||'chua';(g[k]=g[k]||[]).push(p);});
+  const keys=Object.keys(g).sort((a,b)=>a==='chua'?1:b==='chua'?-1:a.localeCompare(b));
+  return `<div class="panel"><div class="panel-h">
+    <b>${icon('i-cal')} Lịch quay sắp tới</b>
+    <small>${chua.length} buổi · gom theo ngày</small></div>
+    <div class="panel-b">${keys.map(k=>{
+      const n=k==='chua'?null:dd(k);
+      const nhan=k==='chua'?'Chưa hẹn ngày'
+        :n<0?`${fdate(k)} · quá hẹn ${Math.abs(n)} ngày`
+        :n===0?`Hôm nay · ${fdate(k)}`:n===1?`Ngày mai · ${fdate(k)}`
+        :`${fdate(k)} · còn ${n} ngày`;
+      return `<div class="qday ${n!==null&&n<0?'late':n===0?'today':''}">
+        <div class="qd-h">${esc(nhan)}<span>${g[k].length} buổi</span></div>
+        ${g[k].sort((a,b)=>(a.film_time||'').localeCompare(b.film_time||'')).map(p=>`
+          <div class="qd-i" data-post="${p.id}">
+            <span class="qd-t">${esc(p.film_time||'--:--')}</span>
+            <span class="qd-m"><b>${esc(p.title)}</b>
+              <small>${p.film_place?esc(p.film_place):'chưa ghi địa điểm'}
+                ${p.film_props?' · cần chuẩn bị: '+esc(p.film_props.slice(0,42))
+                  +(p.film_props.length>42?'…':''):''}</small></span>
+            <span class="qd-r">${p.film_started
+              ?'<span class="pill pill-s s-teal">đang quay</span>'
+              :`<button class="todo-b" data-q="qk-fstart:${p.id}">Nhận quay</button>`}</span>
+          </div>`).join('')}
+      </div>`;}).join('')}</div></div>`;
+}
+
+/* ─── Giao yêu cầu quay: Leader hoặc Content điền brief cho bạn quay ─── */
+function filmForm(p){
+  const fm=MEMBERS.filter(m=>m.kind==='film');
+  const t=new Date(D0()); t.setDate(t.getDate()+1);
+  openDrawer(`<div class="dr-code">Yêu cầu quay</div>
+    <div class="dr-title">${esc(p.title)}</div>
+    <div class="dr-meta">${esc(p.channel||'')} · ${esc(p.fmt||'')}
+      · người viết ${esc(p.writer||'')}</div>
+
+    <div class="dr-lab">Giao cho</div>
+    <select id="fmWho" class="fld">${fm.map(m=>
+      `<option ${m.name===(p.filmer||deskOwner('film'))?'selected':''}>${esc(m.name)}</option>`).join('')}
+      ${!fm.length?'<option>Chưa có nhân sự quay</option>':''}</select>
+
+    <div class="dr-lab">Cần quay những gì <span style="color:var(--red)">*</span></div>
+    <textarea id="fmBrief" placeholder="Ví dụ: quay cận cảnh tô mì cấp độ 5, khói bốc lên, cảnh kéo sợi mì. Lấy thêm 2–3 góc rộng khu bếp.">${esc(p.film_brief||'')}</textarea>
+
+    <div class="two"><div><div class="dr-lab">Ngày quay</div>
+      <input type="date" id="fmDate" class="fld" value="${p.film_date||iso(t)}"></div>
+      <div><div class="dr-lab">Giờ hẹn</div>
+      <input type="time" id="fmTime" class="fld" value="${p.film_time||'09:00'}"></div></div>
+
+    <div class="dr-lab">Địa điểm</div>
+    <input type="text" id="fmPlace" class="fld" value="${esc(p.film_place||'')}"
+      placeholder="Ví dụ: Bếp cơ sở 1 – 443 Phan Đình Phùng">
+    <div class="sugs" style="margin-top:7px">${
+      ['Bếp cơ sở 1 – 443 Phan Đình Phùng','Khu vực bàn – cơ sở 1','Quầy pha chế','Mặt tiền quán','Ngoại cảnh']
+      .map(x=>`<button class="sug" data-fmp="${esc(x)}">+ ${esc(x)}</button>`).join('')}</div>
+
+    <div class="dr-lab">Cần chuẩn bị trước</div>
+    <textarea id="fmProps" placeholder="Món ăn, đạo cụ, ánh sáng, xin phép khách…">${esc(p.film_props||'')}</textarea>
+
+    <div class="dr-lab">Link tham khảo</div>
+    <input type="text" id="fmRef" class="fld" value="${esc(p.film_ref||'')}"
+      placeholder="Link video mẫu muốn làm theo (không bắt buộc)">
+
+    <button class="btn btn-pri btn-full" id="fmSave">${icon('i-cam')}Giao việc quay</button>
+    <div class="permhint" style="margin-top:12px">${icon('i-alert')}
+      <span>Brief càng rõ thì càng ít phải quay lại. Nêu rõ góc máy, cảnh cần lấy
+      và thứ cần chuẩn bị trước khi tới.</span></div>`);
+  document.querySelectorAll('[data-fmp]').forEach(b=>b.onclick=()=>{
+    document.getElementById('fmPlace').value=b.dataset.fmp;});
+  document.getElementById('fmSave').onclick=()=>{
+    const br=document.getElementById('fmBrief').value.trim();
+    if(!br){toast('Ghi rõ cần quay gì đã nhé');return;}
+    save('posts',p.id,{status:'Đang quay',need_film:true,filmer:V('fmWho'),
+      film_brief:br,film_date:V('fmDate')||null,film_time:V('fmTime')||null,
+      film_place:V('fmPlace')||null,film_props:document.getElementById('fmProps').value||null,
+      film_ref:V('fmRef')||null,film_started:null},
+      'Đã giao quay cho '+V('fmWho')+(V('fmDate')?' — hẹn '+fdate(V('fmDate')):''));
+  };
+}
+
+/* ─── Khối thông tin quay hiện trong chi tiết bài ─── */
+function filmInfo(p){
+  if(!p.film_brief&&!p.film_date) return '';
+  const late=p.film_date&&dd(p.film_date)<0&&!p.film_done;
+  return `<div class="dr-lab">Thông tin buổi quay</div>
+    <div class="filmbox ${late?'late':''}">
+      <div class="fb-h">
+        <span class="fb-i">${icon('i-cam')}</span>
+        <span class="fb-t"><b>${p.film_date?fdate(p.film_date):'Chưa hẹn ngày'}${
+          p.film_time?' · '+esc(p.film_time):''}</b>
+          <small>${p.film_place?esc(p.film_place):'chưa ghi địa điểm'}</small></span>
+        ${p.film_done?`<span class="pill pill-s s-green">đã quay xong</span>`
+          :late?`<span class="pill pill-s s-red">quá hẹn ${Math.abs(dd(p.film_date))} ngày</span>`
+          :p.film_started?`<span class="pill pill-s s-teal">đang quay</span>`
+          :`<span class="pill pill-s s-amber">chờ quay</span>`}
+      </div>
+      ${p.film_brief?`<div class="fb-r"><i>Cần quay</i><span>${esc(p.film_brief)}</span></div>`:''}
+      ${p.film_props?`<div class="fb-r"><i>Chuẩn bị</i><span>${esc(p.film_props)}</span></div>`:''}
+      ${p.film_ref?`<div class="fb-r"><i>Tham khảo</i>
+        <a href="${esc(p.film_ref)}" target="_blank" rel="noopener">${esc(p.film_ref)}</a></div>`:''}
+      ${p.filmer?`<div class="fb-r"><i>Người quay</i><span>${whoCell(p.filmer)}</span></div>`:''}
+    </div>`;
+}
+
 /* ─── Chọn ảnh đại diện ─── */
 function avatarPicker(cur,name){
   return `<div class="dr-lab">Ảnh đại diện</div>
@@ -5514,6 +6687,13 @@ function nhacViec(){
     l:cho.slice(0,5).map(p=>({k:'post',id:p.id,t:p.title,
       s:esc(norm(p.status))+' · '+esc(p.channel||'')}))});
 
+  /* 4b. Bài đã đăng chưa nhập chỉ số */
+  const canDo=baiCanDo().filter(p=>p.writer===ME.name);
+  if(canDo.length) G.push({lv:'blue',ic:'i-chart',t:'Bài cần nhập chỉ số',
+    d:'Đăng đã 1–2 ngày, vào kênh lấy số về nhập',
+    l:canDo.slice(0,4).map(p=>({k:'post',id:p.id,t:p.title,
+      s:esc(p.channel||'')+' · đăng '+Math.abs(dd(p.pub_date))+' ngày trước'}))});
+
   /* 5. Báo cáo ngày */
   const rp=REPORTS.find(r=>r.author===ME.name&&r.date===td);
   const chuaNop=!rp||rp.status==='Chưa nộp'||rp.status==='Yêu cầu sửa';
@@ -5597,6 +6777,58 @@ function showNhac(){
     close(); go(b.dataset.nhacgo);
   });
 }
+
+
+/* ─── Bấm ô số liệu Trang chủ: mở danh sách chi tiết ─── */
+function bkpiDrawer(kind){
+  if(kind==='projects'){ go('projects'); return; }
+  const td=iso(D0());
+  const openP=POSTS.filter(p=>!DONE.includes(p.status));
+  const act=TASKS.filter(t=>tgrp(t)!=='Không áp dụng'&&tgrp(t)!=='Hoàn thành');
+  let title='',sub='',ps=[],ts=[];
+  if(kind==='mine'){
+    title='Công việc cần xử lý'; sub='Mọi thứ đang nằm ở tay bạn';
+    ps=openP.filter(p=>holds(p,ME.name));
+    ts=act.filter(t=>(t.owner||'').includes(ME.name));
+  } else if(kind==='today'){
+    title='Đến hạn hôm nay'; sub='Cần xong trong ngày '+fdate(td);
+    ps=openP.filter(p=>p.pub_date===td);
+    ts=act.filter(t=>t.due===td);
+  } else if(kind==='late'){
+    title='Công việc quá hạn'; sub='Xử lý trước tiên hoặc báo Leader dời hạn';
+    ps=openP.filter(latePost);
+    ts=TASKS.filter(lateTask);
+  }
+  const prow=p=>{const h=holder(p);
+    return `<button class="dk-row" data-post="${p.id}">
+      <span class="dk-av">${h?avat(h):'<span class="av none">?</span>'}</span>
+      <span class="dk-t"><b>${esc(p.title)}</b>
+        <small><span class="pill pill-s ${F(p.status).cls}">${esc(norm(p.status))}</span>
+          ${esc(p.channel||'')}</small></span>
+      <span class="dk-d ${latePost(p)?'late':''}">${dueChip2(p.pub_date)}</span></button>`;};
+  const trow=t=>`<button class="dk-row" data-task="${t.id}">
+      <span class="dk-av">${t.owner?avat((t.owner||'').split(',')[0].trim()):'<span class="av none">?</span>'}</span>
+      <span class="dk-t"><b>${esc(t.name)}</b>
+        <small><span class="pill pill-s ${tcls(t)}">${esc(t.status)}</span> ${esc(t.area||'')}</small></span>
+      <span class="dk-d ${lateTask(t)?'late':''}">${dueChip2(t.due)}</span></button>`;
+  openDrawer(`<div class="dr-code">Trang chủ</div>
+    <div class="dr-title">${title}</div>
+    <div class="dr-meta">${sub} · ${ps.length+ts.length} mục</div>
+    ${ps.length?`<div class="dr-lab">Bài đăng (${ps.length})</div>
+      <div class="dk-list">${ps.map(prow).join('')}</div>`:''}
+    ${ts.length?`<div class="dr-lab">Đầu việc (${ts.length})</div>
+      <div class="dk-list">${ts.map(trow).join('')}</div>`:''}
+    ${!ps.length&&!ts.length?`<div class="empty">${icon('i-check')}<br><br>Không có mục nào. Tuyệt!</div>`:''}`);
+  document.querySelectorAll('.dk-row[data-post]').forEach(b=>b.onclick=()=>openPost(+b.dataset.post));
+  document.querySelectorAll('.dk-row[data-task]').forEach(b=>b.onclick=()=>openTask(+b.dataset.task));
+}
+const dueChip2=d=>{
+  const n=dd(d); if(n===null) return '—';
+  if(n<0) return 'quá '+Math.abs(n)+' ngày';
+  if(n===0) return 'hôm nay';
+  if(n===1) return 'ngày mai';
+  return 'còn '+n+' ngày';
+};
 
 /* ─── Nhắc việc ─── */
 function openAlerts(){
