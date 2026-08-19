@@ -349,6 +349,61 @@ function setTheme(t){
 
 /* ─── Đăng nhập bằng email và mật khẩu ─── */
 
+/* ─── Tự chẩn đoán khi không đăng nhập được ─── */
+async function chanDoan(){
+  const L=[];
+  const ok=(t,d)=>L.push({s:'ok',t,d});
+  const xau=(t,d)=>L.push({s:'xau',t,d});
+  const luu=(t,d)=>L.push({s:'luu',t,d});
+
+  /* 1. Kết nối */
+  if(DEMO_MODE) xau('Chưa nối được Supabase',
+    'Đang chạy dữ liệu mẫu. Kiểm tra config.js hoặc chạy supabase/fix-quyen.sql.');
+  else ok('Kết nối Supabase', 'Đọc được '+MEMBERS.length+' nhân sự.');
+
+  /* 2. Trình duyệt có băm được không */
+  const coSubtle = typeof crypto!=='undefined' && !!(crypto&&crypto.subtle);
+  const thu=await bamMK('test');
+  if(coSubtle&&thu) ok('Mã hoá mật khẩu','dùng crypto trình duyệt');
+  else if(thu) luu('Đang dùng bản mã hoá dự phòng',
+    'Trang mở qua http:// nên trình duyệt khoá crypto. Vẫn đăng nhập được, '
+    +'nhưng nên mở bằng link https:// của Vercel.');
+  else xau('Không mã hoá được mật khẩu','Báo lại để kiểm tra.');
+
+  /* 3. Cột mật khẩu */
+  const coPw=MEMBERS.filter(m=>m.pw).length;
+  if(coPw===MEMBERS.length) ok('Mọi tài khoản đã có mật khẩu','');
+  else if(coPw===0) xau('Chưa tài khoản nào có mật khẩu',
+    'Chạy file supabase/CHAY-CAI-NAY.sql trong Supabase → SQL Editor.');
+  else luu('Chỉ '+coPw+'/'+MEMBERS.length+' tài khoản có mật khẩu',
+    'Người còn lại tạm dùng mã PIN cũ để vào.');
+
+  /* 4. Email */
+  const thieuMail=MEMBERS.filter(m=>!m.email);
+  if(!thieuMail.length) ok('Mọi tài khoản đã có email','');
+  else xau(thieuMail.length+' tài khoản chưa có email',
+    thieuMail.map(m=>m.name).join(', ')+' — chạy CHAY-CAI-NAY.sql.');
+
+  /* 5. Tên miền email đang dùng */
+  const mien=[...new Set(MEMBERS.filter(m=>m.email)
+    .map(m=>'@'+(m.email.split('@')[1]||'')))];
+  if(mien.length) luu('Email trong hệ thống đang là '+mien.join(' và '),
+    'Danh sách: '+MEMBERS.filter(m=>m.email).map(m=>m.email).join(' · '));
+
+  const bang=L.map(x=>`<div class="cd-r cd-${x.s}">
+    <span class="cd-i">${x.s==='ok'?'✓':x.s==='xau'?'✕':'!'}</span>
+    <span><b>${esc(x.t)}</b>${x.d?`<small>${esc(x.d)}</small>`:''}</span></div>`).join('');
+
+  const box=document.getElementById('cdBox');
+  if(box){ box.innerHTML=`<div class="cdlist">${bang}</div>`; box.classList.add('on'); }
+  console.log('=== CHẨN ĐOÁN ĐĂNG NHẬP ===');
+  L.forEach(x=>console.log((x.s==='ok'?'✓':x.s==='xau'?'✕':'!')+' '+x.t+(x.d?' — '+x.d:'')));
+  console.log('Danh sách tài khoản:', MEMBERS.map(m=>({
+    ten:m.name, email:m.email||'(thiếu)',
+    matKhau:m.pw?'có':'(thiếu)', pinCu:m.pin||'(không)' })));
+}
+
+
 /* ─── Giữ phiên đăng nhập, F5 không bị đá ra ─── */
 const PHIEN_NGAY=14;   /* nhớ 14 ngày */
 async function luuPhien(m){
@@ -379,13 +434,57 @@ async function docPhien(){
 const MUOI='kitachi-mkt-os-v2';
 async function bamMK(mk){
   try{
-    const d=new TextEncoder().encode(MUOI+mk);
-    const h=await crypto.subtle.digest('SHA-256',d);
-    return [...new Uint8Array(h)].map(b=>b.toString(16).padStart(2,'0')).join('');
-  }catch(e){
-    console.error('Trình duyệt không băm được mật khẩu:',e);
-    return null;   /* rơi về so sánh mã PIN */
+    if(typeof crypto!=='undefined'&&crypto.subtle){
+      const d=new TextEncoder().encode(MUOI+mk);
+      const h=await crypto.subtle.digest('SHA-256',d);
+      return [...new Uint8Array(h)].map(b=>b.toString(16).padStart(2,'0')).join('');
+    }
+  }catch(e){ console.warn('crypto.subtle không dùng được:',e); }
+  /* Dự phòng: bản SHA-256 viết tay, dùng khi mở bằng http:// */
+  return sha256JS(MUOI+mk);
+}
+
+/* SHA-256 thuần JavaScript — cho môi trường không có crypto.subtle */
+function sha256JS(msg){
+  const K=[0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+  0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+  0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+  0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+  0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+  0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+  0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+  0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2];
+  let H=[0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
+  /* chuỗi sang byte theo UTF-8 */
+  const b=[]; for(const ch of unescape(encodeURIComponent(msg))) b.push(ch.charCodeAt(0));
+  const L=b.length*8;
+  b.push(0x80); while(b.length%64!==56) b.push(0);
+  for(let i=7;i>=0;i--) b.push((L/Math.pow(2,i*8))&255);
+  const R=(x,n)=>(x>>>n)|(x<<(32-n));
+  for(let i=0;i<b.length;i+=64){
+    const w=new Array(64);
+    for(let j=0;j<16;j++) w[j]=(b[i+j*4]<<24)|(b[i+j*4+1]<<16)|(b[i+j*4+2]<<8)|b[i+j*4+3];
+    for(let j=16;j<64;j++){
+      const s0=R(w[j-15],7)^R(w[j-15],18)^(w[j-15]>>>3);
+      const s1=R(w[j-2],17)^R(w[j-2],19)^(w[j-2]>>>10);
+      w[j]=(w[j-16]+s0+w[j-7]+s1)|0;
+    }
+    let [a,c,d,e,f,g,h,i2]=H;
+    for(let j=0;j<64;j++){
+      const S1=R(f,6)^R(f,11)^R(f,25), ch=(f&g)^(~f&h);
+      const t1=(i2+S1+ch+K[j]+w[j])|0;
+      const S0=R(a,2)^R(a,13)^R(a,22), mj=(a&c)^(a&d)^(c&d);
+      const t2=(S0+mj)|0;
+      i2=h; h=g; g=f; f=(e+t1)|0; e=d; d=c; c=a; a=(t1+t2)|0;
+    }
+    H=[H[0]+a,H[1]+c,H[2]+d,H[3]+e,H[4]+f,H[5]+g,H[6]+h,H[7]+i2].map(x=>x|0);
   }
+  return H.map(x=>(x>>>0).toString(16).padStart(8,'0')).join('');
+}
+let SAI_LIEN=0;
+function moChanDoan(){
+  SAI_LIEN++;
+  if(SAI_LIEN>=2){ const b=document.getElementById('cdBtn'); if(b) b.classList.add('on'); }
 }
 function baoLoiDN(msg){
   const e=document.getElementById('loginErr');
@@ -408,15 +507,16 @@ async function doLogin(){
   if(!raw){ baoLoiDN('Nhập email hoặc tên của bạn'); return; }
   if(!mk){ baoLoiDN('Nhập mật khẩu đã nhé'); return; }
   const m=timNguoi(raw);
-  if(!m){ baoLoiDN('Email hoặc mật khẩu chưa đúng.'); return; }
+  if(!m){ baoLoiDN('Email hoặc mật khẩu chưa đúng.'); moChanDoan(); return; }
   let dung=false, cachCu=false;
   if(m.pw){ dung = (await bamMK(mk))===m.pw; }
   if(!dung && m.pin){ dung = mk===String(m.pin); cachCu=dung; }  /* mã PIN cũ vẫn vào được */
   if(!dung){
     baoLoiDN('Email hoặc mật khẩu chưa đúng.');
+    moChanDoan();
     const p=document.getElementById('lgPw'); if(p){p.select();} return; }
   if(cachCu) setTimeout(()=>toast('Bạn vừa vào bằng mã PIN cũ — nên đặt mật khẩu mới'),900);
-  baoLoiDN('');
+  baoLoiDN(''); SAI_LIEN=0;
   ME=m;
   await luuPhien(m);
   try{ localStorage.setItem('mktos_mail', (m.email||'').toLowerCase()); }catch(e){}
@@ -517,6 +617,7 @@ function datLaiMatKhau(id){
 }
 
 document.getElementById('loginBtn').onclick=doLogin;
+{ const b=document.getElementById('cdBtn'); if(b) b.onclick=chanDoan; }
 ['lgEmail','lgPw'].forEach(id=>{
   const e=document.getElementById(id);
   if(e){ e.addEventListener('keydown',ev=>{if(ev.key==='Enter')doLogin();});
@@ -593,23 +694,48 @@ async function loadAll(imLang){
 
 
 
+
+/* ─── Nhận thay đổi tức thì từ máy chủ ─── */
+let KENH_RT=null, RT_HEN=null, RT_OK=false;
+function batRealtime(){
+  if(DEMO_MODE||!sb.channel) return;
+  try{
+    if(KENH_RT){ sb.removeChannel(KENH_RT); KENH_RT=null; }
+    KENH_RT=sb.channel('mktos-live')
+      .on('postgres_changes',{event:'*',schema:'public'},()=>{
+        /* gộp nhiều thay đổi liên tiếp thành một lần tải */
+        clearTimeout(RT_HEN);
+        RT_HEN=setTimeout(()=>taiLaiNgam(true),700);
+      })
+      .subscribe(st=>{
+        RT_OK = st==='SUBSCRIBED';
+        if(RT_OK) console.log('Cập nhật tức thì: đang bật');
+        else if(st==='CHANNEL_ERROR'||st==='TIMED_OUT')
+          console.warn('Cập nhật tức thì không bật được — '
+            +'chạy supabase/BAT-CAP-NHAT-TUC-THI.sql. Vẫn tự tải lại mỗi 10 giây.');
+      });
+  }catch(e){ console.warn('Không bật được cập nhật tức thì:',e); }
+}
+
 /* ─── Tự tải lại dữ liệu để thấy thay đổi của người khác ─── */
 let LIVE_TIMER=null, LIVE_LAST=0, LIVE_BUSY=false;
-async function taiLaiNgam(){
-  if(LIVE_BUSY||DEMO_MODE||document.hidden) return;
+function dauVet(){
+  return JSON.stringify({
+    p:ALL_POSTS.map(x=>[x.id,x.status,x.writer,x.editor,x.filmer,x.title,x.archived,x.pub_date]),
+    t:ALL_TASKS.map(x=>[x.id,x.status,x.owner,x.name,x.due,x.archived]),
+    a:APPROVALS.map(x=>[x.id,x.status]),
+    r:REPORTS.map(x=>[x.id,x.status]),
+    m:MEMBERS.map(x=>[x.id,x.name,x.avatar]),
+    c:CHANNELS.map(x=>[x.id,x.name])});
+}
+async function taiLaiNgam(gap){
+  if(LIVE_BUSY||DEMO_MODE) return;
+  if(document.hidden&&!gap) return;
   LIVE_BUSY=true;
   try{
-    const truoc=JSON.stringify({
-      p:POSTS.map(x=>[x.id,x.status,x.editor,x.filmer]),
-      t:TASKS.map(x=>[x.id,x.status,x.owner]),
-      a:APPROVALS.map(x=>[x.id,x.status]),
-      r:REPORTS.map(x=>[x.id,x.status])});
+    const truoc=dauVet();
     await loadAll(true);
-    const sau=JSON.stringify({
-      p:POSTS.map(x=>[x.id,x.status,x.editor,x.filmer]),
-      t:TASKS.map(x=>[x.id,x.status,x.owner]),
-      a:APPROVALS.map(x=>[x.id,x.status]),
-      r:REPORTS.map(x=>[x.id,x.status])});
+    const sau=dauVet();
     if(truoc!==sau){
       render();
       const chip=document.getElementById('liveChip');
@@ -620,12 +746,13 @@ async function taiLaiNgam(){
   LIVE_BUSY=false; LIVE_LAST=Date.now();
 }
 function batDauTuTaiLai(){
+  batRealtime();                                    /* nhận tức thì nếu bật được */
   if(LIVE_TIMER) clearInterval(LIVE_TIMER);
-  LIVE_TIMER=setInterval(taiLaiNgam, 20000);        /* 20 giây một lần */
-  document.addEventListener('visibilitychange',()=>{  /* quay lại tab thì tải ngay */
-    if(!document.hidden&&Date.now()-LIVE_LAST>8000) taiLaiNgam();});
+  LIVE_TIMER=setInterval(()=>taiLaiNgam(), 10000);   /* dự phòng: 10 giây một lần */
+  document.addEventListener('visibilitychange',()=>{
+    if(!document.hidden) taiLaiNgam(true);});        /* quay lại tab: tải ngay */
   window.addEventListener('focus',()=>{
-    if(Date.now()-LIVE_LAST>8000) taiLaiNgam();});
+    if(Date.now()-LIVE_LAST>2000) taiLaiNgam(true);});
 }
 
 
@@ -5652,8 +5779,36 @@ function viewAdmin(){
           <button class="btn btn-gh btn-sm" data-goto="archive">Mở lưu trữ</button></div>
       </div></div>
 
-    <div class="panel"><div class="panel-h"><b>${icon('i-doc')} Xuất dữ liệu</b>
-      <small>tải về máy dạng CSV, mở được bằng Excel</small></div>
+    ${(()=>{const c=canSaoLuu();
+      return `<div class="panel ${c&&c.gap?'sl-warn':''}"><div class="panel-h">
+      <b>${icon('i-box')} Sao lưu toàn bộ</b>
+      <small>${c&&c.ngay!==null?`lần gần nhất ${c.ngay===0?'hôm nay':c.ngay+' ngày trước'}`
+        :'chưa sao lưu lần nào'}</small></div>
+      <div class="panel-b">
+        ${c&&c.gap?`<div class="notice" style="margin-bottom:13px">
+          <span class="ni">${icon('i-alert')}</span>
+          <span><b>${c.ngay===null?'Chưa có bản sao lưu nào'
+            :'Đã '+c.ngay+' ngày chưa sao lưu'}</b>
+            <p>Gói Supabase miễn phí không tự sao lưu. Mất dữ liệu là mất hẳn.
+            Nên tải một bản mỗi tuần và giữ trên Google Drive.</p></span></div>`:''}
+        <div class="slgrid">
+          <button class="slbtn" id="slNow">
+            <span class="sl-i">${icon('i-box')}</span>
+            <span><b id="slNowT">Tải bản sao lưu</b>
+              <small>toàn bộ ${BANG_SAO_LUU.length} bảng, một file .json</small></span></button>
+          <button class="slbtn gh" id="slBack">
+            <span class="sl-i">${icon('i-loop')}</span>
+            <span><b>Phục hồi từ file</b>
+              <small>đưa dữ liệu từ bản sao lưu trở lại</small></span></button>
+        </div>
+        <div class="slnote">${icon('i-alert')}
+          <span>Đặt lịch nhắc trên điện thoại: <b>sáng thứ Hai hằng tuần</b>.
+          Tải file rồi kéo vào một thư mục riêng trên Google Drive.
+          Giữ lại 4 bản gần nhất là đủ.</span></div>
+      </div></div>`;})()}
+
+    <div class="panel"><div class="panel-h"><b>${icon('i-doc')} Xuất từng bảng</b>
+      <small>dạng CSV, mở được bằng Excel</small></div>
       <div class="panel-b"><div class="dgrid">
         ${[['Đầu việc','tasks'],['Bài đăng','posts'],['Nhân sự','members'],['Kênh','channels'],
            ['Ngân sách','budget'],['Báo cáo ngày','reports']].map(([t,k])=>
@@ -5661,7 +5816,8 @@ function viewAdmin(){
             <b style="font-size:13px">${icon('i-doc')}</b></div>`).join('')}
       </div>
       <div style="font-size:11.5px;color:var(--ink3);margin-top:10px;line-height:1.6">
-        Nên xuất định kỳ mỗi tháng để có bản sao lưu ngoài hệ thống.</div></div></div>
+        CSV dùng để xem và tính toán trong Excel. Muốn khôi phục được thì dùng
+        bản sao lưu .json ở trên.</div></div></div>
 
     <div class="panel" style="border:1px solid #F3C9C9"><div class="panel-h">
       <b style="color:var(--red)">${icon('i-alert')} Vùng nguy hiểm</b>
@@ -6066,6 +6222,8 @@ function bindAll(){
   if(b('adNewMem')) b('adNewMem').onclick=()=>editMember(null);
   if(b('adRoles')) b('adRoles').onclick=()=>go('roles');
   if(b('setLogo')) b('setLogo').onclick=()=>logoForm();
+  if(b('slNow')) b('slNow').onclick=()=>saoLuuNgay('slNowT');
+  if(b('slBack')) b('slBack').onclick=()=>phucHoiForm();
   if(b('mnSave')) b('mnSave').onclick=async()=>{
     const map={};
     document.querySelectorAll('[data-mv]').forEach(c=>{
@@ -7270,6 +7428,126 @@ function logoForm(){
 }
 
 
+
+/* ═══════ SAO LƯU TOÀN BỘ ═══════ */
+const BANG_SAO_LUU=['members','roles','perms','projects','sprints','channels','channel_stats',
+  'tasks','posts','budget','ads','promos','reports','approvals','kudos','duty','risks',
+  'docs','meetings','settings'];
+
+async function taoBanSaoLuu(){
+  const goi={ phien_ban:2, luc:new Date().toISOString(),
+    nguoi:ME?ME.name:'', che_do:DEMO_MODE?'du-lieu-mau':'that', bang:{} };
+  for(const t of BANG_SAO_LUU){
+    try{
+      const {data,error}=await sb.from(t).select('*');
+      if(error){ console.warn('Bỏ qua bảng',t,error.message); continue; }
+      goi.bang[t]=data||[];
+    }catch(e){ console.warn('Lỗi đọc bảng',t,e); }
+  }
+  return goi;
+}
+function taiFile(ten,noiDung,kieu){
+  const b=new Blob([noiDung],{type:kieu||'application/json;charset=utf-8'});
+  const u=URL.createObjectURL(b), a=document.createElement('a');
+  a.href=u; a.download=ten; document.body.appendChild(a); a.click();
+  setTimeout(()=>{URL.revokeObjectURL(u);a.remove();},400);
+}
+function tenFile(duoi){
+  const d=new Date(), z=n=>String(n).padStart(2,'0');
+  return `kieufoods-saoluu-${d.getFullYear()}${z(d.getMonth()+1)}${z(d.getDate())}`
+    +`-${z(d.getHours())}${z(d.getMinutes())}.${duoi}`;
+}
+async function saoLuuNgay(nut){
+  const b=document.getElementById(nut);
+  if(b){ b.disabled=true; b.textContent='Đang gom dữ liệu…'; }
+  try{
+    const goi=await taoBanSaoLuu();
+    const n=Object.values(goi.bang).reduce((s,x)=>s+x.length,0);
+    taiFile(tenFile('json'), JSON.stringify(goi,null,1));
+    try{ localStorage.setItem('mktos_saoluu_luc', String(Date.now()));
+      localStorage.setItem('mktos_saoluu_so', String(n)); }catch(e){}
+    toast('Đã tải bản sao lưu — '+nf(n)+' dòng, '
+      +Object.keys(goi.bang).length+' bảng');
+  }catch(e){ toast('Không sao lưu được: '+(e.message||'')); }
+  if(b){ b.disabled=false; b.textContent='Tải bản sao lưu'; }
+  render();
+}
+
+/* Nhắc sao lưu khi quá lâu */
+function canSaoLuu(){
+  if(!laLeader()) return null;
+  let luc=0;
+  try{ luc=+(localStorage.getItem('mktos_saoluu_luc')||0); }catch(e){}
+  if(!luc) return {ngay:null, gap:true};
+  const ngay=Math.floor((Date.now()-luc)/864e5);
+  return {ngay, gap:ngay>=7};
+}
+
+/* Xem thử nội dung file sao lưu trước khi phục hồi */
+function phucHoiForm(){
+  if(!laLeader()){toast('Chỉ Leader phục hồi được');return;}
+  openDrawer(`<div class="dr-code">Sao lưu</div>
+    <div class="dr-title">Phục hồi từ file</div>
+    <div class="notice" style="margin-top:12px">
+      <span class="ni">${icon('i-alert')}</span>
+      <span><b>Đọc kỹ trước khi làm</b>
+        <p>Phục hồi sẽ <b>ghi đè</b> dữ liệu đang có bằng dữ liệu trong file.
+        Nên tải một bản sao lưu mới ngay trước khi phục hồi, phòng khi cần quay lại.</p></span></div>
+    <div class="dr-lab">Chọn file sao lưu (.json)</div>
+    <input type="file" id="phFile" accept=".json,application/json" class="fld">
+    <div id="phXem"></div>`);
+  document.getElementById('phFile').onchange=e=>{
+    const f=e.target.files&&e.target.files[0]; if(!f) return;
+    const rd=new FileReader();
+    rd.onload=async ev=>{
+      let goi;
+      try{ goi=JSON.parse(ev.target.result); }
+      catch(x){ document.getElementById('phXem').innerHTML=
+        `<div class="permhint" style="margin-top:14px">${icon('i-alert')}
+          <span>File không đọc được. Phải là file .json do app tạo ra.</span></div>`; return; }
+      if(!goi.bang){ document.getElementById('phXem').innerHTML=
+        `<div class="permhint" style="margin-top:14px">${icon('i-alert')}
+          <span>Không phải file sao lưu của Marketing OS.</span></div>`; return; }
+      const rows=Object.entries(goi.bang);
+      const tong=rows.reduce((s,[,v])=>s+v.length,0);
+      document.getElementById('phXem').innerHTML=`
+        <div class="dr-lab">Nội dung file</div>
+        <div class="slbox">
+          <div class="sl-h"><b>${goi.luc?fdate2(goi.luc.slice(0,10)):'không rõ ngày'}</b>
+            <span>${goi.nguoi?'do '+esc(goi.nguoi)+' tạo':''}</span></div>
+          <div class="sl-n">${nf(tong)} dòng trong ${rows.length} bảng</div>
+          <div class="sl-l">${rows.filter(([,v])=>v.length)
+            .sort((a,b)=>b[1].length-a[1].length)
+            .map(([k,v])=>`<span><i>${esc(k)}</i>${nf(v.length)}</span>`).join('')}</div>
+        </div>
+        <label class="rfck" style="margin-top:14px;gap:9px;align-items:flex-start">
+          <input type="checkbox" id="phOk"><span></span>
+          <span style="font-size:12.5px;line-height:1.55">Tôi hiểu dữ liệu hiện tại sẽ bị ghi đè
+            và đã tải bản sao lưu mới trước khi làm việc này.</span></label>
+        <button class="btn btn-pri btn-full danger" id="phGo" style="margin-top:12px">
+          ${icon('i-loop')}Phục hồi ${nf(tong)} dòng</button>`;
+      document.getElementById('phGo').onclick=async()=>{
+        if(!document.getElementById('phOk').checked){toast('Tích vào ô xác nhận đã nhé');return;}
+        const b=document.getElementById('phGo');
+        b.disabled=true;
+        let ok=0,loi=0;
+        for(const [t,rows2] of Object.entries(goi.bang)){
+          if(!rows2.length) continue;
+          b.textContent='Đang phục hồi '+t+'…';
+          try{
+            const {error}=await sb.from(t).upsert(rows2);
+            if(error){ console.warn('Lỗi bảng',t,error.message); loi++; }
+            else ok++;
+          }catch(e){ console.warn('Lỗi bảng',t,e); loi++; }
+        }
+        toast(loi?`Xong ${ok} bảng, ${loi} bảng lỗi — xem Console`:`Đã phục hồi ${ok} bảng`);
+        closeDrawer(); await loadAll();
+      };
+    };
+    rd.readAsText(f);
+  };
+}
+
 /* ═══════ HỒ SƠ CÁ NHÂN ═══════ */
 function hoSoCuaToi(ten){
   const m=MEMBERS.find(x=>x.name===(ten||ME.name)); if(!m) return;
@@ -7652,6 +7930,14 @@ function nhacViec(){
     d:'Đăng đã 1–2 ngày, vào kênh lấy số về nhập',
     l:canDo.slice(0,4).map(p=>({k:'post',id:p.id,t:p.title,
       s:esc(p.channel||'')+' · đăng '+Math.abs(dd(p.pub_date))+' ngày trước'}))});
+
+  /* 4c. Nhắc sao lưu */
+  {const c=canSaoLuu();
+   if(c&&c.gap) G.push({lv:'amber',ic:'i-box',t:'Nên sao lưu dữ liệu',
+     d:c.ngay===null?'Chưa có bản sao lưu nào — dữ liệu chưa được bảo vệ'
+       :'Đã '+c.ngay+' ngày chưa sao lưu',
+     l:[{k:'goto',id:'admin',t:'Mở Quản trị để tải bản sao lưu',
+       s:'Dọn dẹp & sao lưu → Tải bản sao lưu'}]});}
 
   /* 5. Báo cáo ngày */
   const rp=REPORTS.find(r=>r.author===ME.name&&r.date===td);
