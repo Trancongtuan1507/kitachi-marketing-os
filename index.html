@@ -58,6 +58,7 @@
   <symbol id="i-tag" viewBox="0 0 24 24"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0l-7.2-7.2A2 2 0 0 1 2.8 12V4.8A2 2 0 0 1 4.8 2.8H12a2 2 0 0 1 1.4.6l7.2 7.2a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.4"/></symbol>
   <symbol id="i-truck" viewBox="0 0 24 24"><path d="M2 6.5h11v11H2zM13 10h4l3 3.5v4h-7z"/><circle cx="6" cy="18.5" r="1.8"/><circle cx="16.5" cy="18.5" r="1.8"/></symbol>
   <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M13 5l7 7-7 7"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4" y="10.5" width="16" height="10.5" rx="2"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></symbol>
   <symbol id="i-back" viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7"/></symbol>
   <symbol id="i-cam" viewBox="0 0 24 24"><path d="M22 8.6v6.8a1 1 0 0 1-1.5.87L16 13.5v-3l4.5-2.77A1 1 0 0 1 22 8.6z"/><rect x="2" y="6" width="14" height="12" rx="2.5"/><circle cx="9" cy="12" r="2.4"/></symbol>
   <symbol id="i-film" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 4v16M17 4v16M3 12h18M3 8h4M3 16h4M17 8h4M17 16h4"/></symbol>
@@ -107,17 +108,18 @@
       <h2 class="lg-title">Đăng nhập hệ thống</h2>
       <p class="lg-sub">Kitachi Marketing Team</p>
       <div id="loginErr" class="login-err"></div>
-      <div class="lab">Bạn là ai</div>
-      <div id="memberList" class="member-list"></div>
-      <div class="lab">Mã PIN</div>
+      <div class="lab">Email</div>
+      <input id="lgEmail" type="email" class="lgin" placeholder="ten@kieufoods.vn"
+        autocomplete="username" spellcheck="false" inputmode="email">
+      <div class="lab">Mật khẩu</div>
       <div class="pinbox">
-        <input id="pin" type="password" inputmode="numeric" maxlength="6"
-          placeholder="••••" autocomplete="off">
-        <button type="button" id="pinEye" class="pineye" title="Hiện mã PIN">
+        <input id="lgPw" type="password" class="lgin" placeholder="••••••••"
+          autocomplete="current-password">
+        <button type="button" id="pinEye" class="pineye" title="Hiện mật khẩu">
           <svg class="ic"><use href="#i-eye"/></svg></button>
       </div>
       <button id="loginBtn" class="btn btn-pri btn-full">Đăng nhập →</button>
-      <div class="lg-note">Quên mã PIN? Nhờ Leader mở mục Quản trị đặt lại giúp.</div>
+      <div class="lg-note">Quên mật khẩu? Nhờ Leader vào mục Quản trị đặt lại giúp.</div>
     </div>
   </div>
 </div>
@@ -178,8 +180,11 @@
 
     <div class="side-foot">
       <div class="side-user">
-        <div class="av" id="sideAv"></div>
-        <div class="side-user-t"><div id="whoName" class="su-n"></div><div id="whoRole" class="su-r"></div></div>
+        <button class="su-btn" id="myProfile" title="Hồ sơ của tôi">
+          <span class="av" id="sideAv"></span>
+          <span class="side-user-t"><span id="whoName" class="su-n"></span>
+            <span id="whoRole" class="su-r"></span></span>
+        </button>
         <button id="logout" class="icobtn" aria-label="Đăng xuất"><svg class="ic"><use href="#i-out"/></svg></button>
       </div>
     </div>

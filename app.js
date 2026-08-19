@@ -170,7 +170,7 @@ const PLAT = {
     needEditor:true, editorLabel:'Người thiết kế',
   },
   'Website': {
-    ic:'i-doc', color:'#6D4AFF', stream:'social',
+    ic:'i-doc', color:'#6F5FC7', stream:'social',
     fmts:['Bài blog','Trang landing','Cập nhật menu','Tin tức'],
     goals:['Nhận biết','SEO','Kéo về quán'],
     fields:[
@@ -288,7 +288,9 @@ function avat(n){
     title="${esc(n)}"><i>${esc(ini(n))}</i></span>`;
   return `<span class="av">${esc(ini(n))}</span>`;
 }
-const whoCell = n => n ? `<span class="who">${avat(n)}<span>${esc(n)}</span></span>`
+const whoCell = n => n
+  ? `<span class="who clickable" data-hsopen="${esc(n)}" title="Xem hồ sơ ${esc(n)}">
+      ${avat(n)}<span>${esc(n)}</span></span>`
   : '<span style="color:var(--ink3)">—</span>';
 
 function holder(p){
@@ -345,64 +347,56 @@ function setTheme(t){
   });
 })();
 
-/* ─── Đăng nhập ─── */
-async function boot(){
-  let why='';
-  let {data,error}=await sb.from('members').select('*').order('sort_order');
-  if(error){
-    console.error('LỖI KẾT NỐI SUPABASE:', error);
-    why = /JWT|apikey|Invalid/i.test(error.message||'')
-      ? 'Chế độ xem thử — <b>khoá Supabase không hợp lệ</b>. Kiểm tra lại config.js.'
-      : 'Chế độ xem thử — lỗi kết nối: '+esc(error.message||'không rõ');
-  } else if(!data||!data.length){
-    console.error('Kết nối được nhưng bảng members trả về RỖNG. '
-      +'Nguyên nhân thường gặp: Row Level Security đang bật. '
-      +'Chạy file supabase/fix-quyen.sql trong Supabase SQL Editor.');
-    why = 'Chế độ xem thử — <b>đọc được máy chủ nhưng không thấy dữ liệu</b>. '
-      +'Chạy file <b>supabase/fix-quyen.sql</b> trong Supabase → SQL Editor.';
+/* ─── Đăng nhập bằng email và mật khẩu ─── */
+const MUOI='kitachi-mkt-os-v2';
+async function bamMK(mk){
+  try{
+    const d=new TextEncoder().encode(MUOI+mk);
+    const h=await crypto.subtle.digest('SHA-256',d);
+    return [...new Uint8Array(h)].map(b=>b.toString(16).padStart(2,'0')).join('');
+  }catch(e){
+    console.error('Trình duyệt không băm được mật khẩu:',e);
+    return null;   /* rơi về so sánh mã PIN */
   }
-  if(error||!data||!data.length){ DEMO_MODE=true; sb=demoClient(); DEMO_WHY=why;
-    ({data}=await sb.from('members').select('*').order('sort_order')); }
-  MEMBERS=data;
-  if(DEMO_MODE) showDemoBanner(whyDemo());
-  document.getElementById('memberList').innerHTML=MEMBERS.map(m=>`
-    <button class="member-btn" data-n="${esc(m.name)}">${
-      m.avatar?`<span class="av img" style="background-image:url('${esc(m.avatar)}')"><i>${esc(ini(m.name))}</i></span>`
-        :`<span class="av">${esc(ini(m.name))}</span>`}
-      <span><b>${esc(m.name)}</b><small>${esc(m.role)}</small></span></button>`).join('');
-  document.querySelectorAll('.member-btn').forEach(b=>b.onclick=()=>{
-    document.querySelectorAll('.member-btn').forEach(x=>x.classList.remove('sel'));
-    b.classList.add('sel'); PICKED=b.dataset.n; document.getElementById('pin').focus(); });
-  const saved=localStorage.getItem('mktos_me');
-  if(saved&&MEMBERS.find(m=>m.name===saved)) enter(saved);
 }
-document.getElementById('loginBtn').onclick=doLogin;
-document.getElementById('pin').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
-document.getElementById('pin').addEventListener('input',()=>{
-  const err=document.getElementById('loginErr'); err.textContent=''; err.classList.remove('on');
-  const v=document.getElementById('pin').value;
-  const m=MEMBERS.find(x=>x.name===PICKED);
-  if(m&&v.length>=4&&v===m.pin) doLogin();
-});
-document.getElementById('pinEye').onclick=()=>{
-  const p=document.getElementById('pin');
-  p.type = p.type==='password'?'text':'password';
-  document.getElementById('pinEye').classList.toggle('on',p.type==='text');
-  p.focus();
-};
-function doLogin(){
-  const err=document.getElementById('loginErr');
-  err.classList.add('on');
-  if(!PICKED){err.textContent='Chọn tên của bạn trước nhé';return;}
-  const m=MEMBERS.find(x=>x.name===PICKED);
-  if(document.getElementById('pin').value!==m.pin){
-    err.textContent='Mã PIN chưa đúng — thử lại nhé';
-    document.getElementById('pin').select(); return;}
-  err.classList.remove('on');
-  localStorage.setItem('mktos_me',PICKED); enter(PICKED);
+function baoLoiDN(msg){
+  const e=document.getElementById('loginErr');
+  if(!e) return;
+  if(msg){ e.textContent=msg; e.classList.add('on'); }
+  else { e.textContent=''; e.classList.remove('on'); }
 }
-async function enter(name){
-  ME=MEMBERS.find(m=>m.name===name);
+function timNguoi(v){
+  const k=(v||'').trim().toLowerCase();
+  if(!k) return null;
+  return MEMBERS.find(x=>(x.email||'').trim().toLowerCase()===k)          /* đúng email */
+    || MEMBERS.find(x=>(x.name||'').trim().toLowerCase()===k)             /* đúng tên */
+    || MEMBERS.find(x=>(x.email||'').split('@')[0].toLowerCase()===k)     /* phần trước @ */
+    || MEMBERS.find(x=>(x.short_name||'').trim().toLowerCase()===k)       /* tên gọi ngắn */
+    || null;
+}
+async function doLogin(){
+  const raw=(V('lgEmail')||'').trim();
+  const mk=V('lgPw')||'';
+  if(!raw){ baoLoiDN('Nhập email hoặc tên của bạn'); return; }
+  if(!mk){ baoLoiDN('Nhập mật khẩu đã nhé'); return; }
+  const m=timNguoi(raw);
+  if(!m){ baoLoiDN('Email hoặc mật khẩu chưa đúng.'); return; }
+  let dung=false, cachCu=false;
+  if(m.pw){ dung = (await bamMK(mk))===m.pw; }
+  if(!dung && m.pin){ dung = mk===String(m.pin); cachCu=dung; }  /* mã PIN cũ vẫn vào được */
+  if(!dung){
+    baoLoiDN('Email hoặc mật khẩu chưa đúng.');
+    const p=document.getElementById('lgPw'); if(p){p.select();} return; }
+  if(cachCu) setTimeout(()=>toast('Bạn vừa vào bằng mã PIN cũ — nên đặt mật khẩu mới'),900);
+  baoLoiDN('');
+  ME=m;
+  try{ localStorage.setItem('mktos_mail', mail); }catch(e){}
+  await vaoApp(m);
+  if(m.pw_reset) setTimeout(()=>doiMatKhau(true), 600);
+}
+
+async function vaoApp(m){
+  ME=m||ME;
   document.getElementById('login').classList.add('hidden');
   document.getElementById('app').classList.remove('hidden');
   document.getElementById('whoName').textContent=ME.name;
@@ -417,7 +411,97 @@ async function enter(name){
   batDauTuTaiLai();
   setTimeout(showNhac, 450);
 }
-document.getElementById('logout').onclick=()=>{localStorage.removeItem('mktos_me');location.reload();};
+document.getElementById('logout').onclick=()=>{
+  try{ localStorage.removeItem('mktos_mail'); }catch(e){}
+  location.reload();
+};
+
+/* Form đổi mật khẩu */
+function doiMatKhau(batBuoc){
+  openDrawer(`<div class="dr-code">Bảo mật</div>
+    <div class="dr-title">${batBuoc?'Đặt mật khẩu mới':'Đổi mật khẩu'}</div>
+    ${batBuoc?`<div class="notice" style="margin-top:12px">
+      <span class="ni">${icon('i-lock')}</span>
+      <span><b>Đây là lần đăng nhập đầu tiên</b>
+        <p>Đặt mật khẩu riêng của bạn để không ai khác vào được tài khoản này.</p></span></div>`
+    :`<div class="dr-meta">Mật khẩu mới cần ít nhất 6 ký tự.</div>`}
+
+    ${batBuoc?'':`<div class="dr-lab">Mật khẩu hiện tại</div>
+      <input type="password" id="mkCu" class="fld" autocomplete="current-password">`}
+    <div class="dr-lab">Mật khẩu mới</div>
+    <input type="password" id="mkMoi" class="fld" autocomplete="new-password"
+      placeholder="ít nhất 6 ký tự">
+    <div class="dr-lab">Gõ lại mật khẩu mới</div>
+    <input type="password" id="mkLai" class="fld" autocomplete="new-password">
+    <button class="btn btn-pri btn-full" id="mkSave">${icon('i-lock')}Lưu mật khẩu</button>
+    ${batBuoc?'':`<div class="permhint" style="margin-top:12px">${icon('i-alert')}
+      <span>Quên mật khẩu thì nhờ Leader đặt lại trong mục Quản trị.</span></div>`}`);
+  document.getElementById('mkSave').onclick=async()=>{
+    if(!batBuoc){
+      const cu=V('mkCu')||'';
+      const dung = ME.pw ? (await bamMK(cu))===ME.pw : cu===ME.pin;
+      if(!dung){toast('Mật khẩu hiện tại chưa đúng');return;}
+    }
+    const moi=V('mkMoi')||'', lai=V('mkLai')||'';
+    if(moi.length<6){toast('Mật khẩu mới phải từ 6 ký tự trở lên');return;}
+    if(moi!==lai){toast('Hai lần gõ chưa khớp nhau');return;}
+    const ok=await save('members',ME.id,{pw:await bamMK(moi),pw_reset:null},'Đã đổi mật khẩu');
+    if(ok) ME=MEMBERS.find(x=>x.id===ME.id)||ME;
+  };
+}
+
+/* Leader đặt lại mật khẩu cho người khác */
+function datLaiMatKhau(id){
+  const m=MEMBERS.find(x=>x.id===id); if(!m) return;
+  if(!laLeader()){toast('Chỉ Leader đặt lại mật khẩu được');return;}
+  openDrawer(`<div class="dr-code">Quản trị</div>
+    <div class="dr-title">Đặt lại mật khẩu</div>
+    <div class="dr-meta">${whoCell(m.name)}<br>${esc(m.email||'chưa có email')}</div>
+    <div class="dr-lab">Email đăng nhập</div>
+    <input type="text" id="dlMail" class="fld" value="${esc(m.email||'')}"
+      placeholder="ten@kieufoods.vn">
+    <div class="dr-lab">Mật khẩu mới</div>
+    <input type="text" id="dlPw" class="fld" value="kitachi@2026">
+    <div class="sugs" style="margin-top:7px">
+      <button class="sug" id="dlRandom">${icon('i-loop')}Tạo mật khẩu ngẫu nhiên</button></div>
+    <label class="rfck" style="margin-top:14px;gap:9px">
+      <input type="checkbox" id="dlBuoc" checked><span></span>
+      <span style="font-size:12.5px">Bắt đổi mật khẩu ở lần đăng nhập đầu</span></label>
+    <button class="btn btn-pri btn-full" id="dlSave">${icon('i-lock')}Đặt lại</button>
+    <div class="permhint" style="margin-top:12px">${icon('i-alert')}
+      <span>Nhớ báo mật khẩu mới cho ${esc(m.name.split(' ').slice(-1)[0])} qua kênh riêng.</span></div>`);
+  document.getElementById('dlRandom').onclick=()=>{
+    const c='abcdefghjkmnpqrstuvwxyz23456789';
+    let s2=''; for(let i=0;i<10;i++) s2+=c[Math.floor(Math.random()*c.length)];
+    document.getElementById('dlPw').value=s2;};
+  document.getElementById('dlSave').onclick=async()=>{
+    const mail=(V('dlMail')||'').trim().toLowerCase();
+    if(!mail||!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(mail)){toast('Email chưa đúng định dạng');return;}
+    const trung=MEMBERS.find(x=>(x.email||'').toLowerCase()===mail&&x.id!==id);
+    if(trung){toast('Email này đã dùng cho '+trung.name);return;}
+    const pw=V('dlPw')||'';
+    if(pw.length<6){toast('Mật khẩu phải từ 6 ký tự');return;}
+    await save('members',id,{email:mail,pw:await bamMK(pw),
+      pw_reset:document.getElementById('dlBuoc').checked?true:null},
+      'Đã đặt lại mật khẩu cho '+m.name);
+  };
+}
+
+document.getElementById('loginBtn').onclick=doLogin;
+['lgEmail','lgPw'].forEach(id=>{
+  const e=document.getElementById(id);
+  if(e){ e.addEventListener('keydown',ev=>{if(ev.key==='Enter')doLogin();});
+    e.addEventListener('input',()=>baoLoiDN('')); }
+});
+{ const eye=document.getElementById('pinEye');
+  if(eye) eye.onclick=()=>{const p=document.getElementById('lgPw');
+    p.type=p.type==='password'?'text':'password';
+    eye.classList.toggle('on',p.type==='text'); p.focus();};
+  try{ const m=localStorage.getItem('mktos_mail');
+    if(m){ const e=document.getElementById('lgEmail'); if(e) e.value=m;
+      const p=document.getElementById('lgPw'); if(p) setTimeout(()=>p.focus(),200); }
+  }catch(e){}
+}
 
 /* ─── Nạp dữ liệu ─── */
 async function loadAll(imLang){
@@ -577,6 +661,8 @@ function go(v,khongLuu,laQuayLai){
 document.querySelectorAll('.nav-i,.bn').forEach(b=>b.onclick=()=>go(b.dataset.view));
 const bh=document.getElementById('brandHome');
 if(bh) bh.onclick=()=>go('dash');
+const mp=document.getElementById('myProfile');
+if(mp) mp.onclick=()=>hoSoCuaToi(null);
 document.getElementById('q').oninput=e=>{QUERY=e.target.value.toLowerCase();
   if(!['tasks','posts'].includes(VIEW)) go('tasks'); else render();};
 document.getElementById('quickAdd').onclick=()=>openCreate();
@@ -669,7 +755,7 @@ function render(){
 
 /* ─── Thanh chọn ngày ─── */
 /* ═════════ TỔNG HỢP — bố cục portal ═════════ */
-const CHCOL = ['#6D4AFF','#12855A','#1F63C7','#D9772B','#0E7490','#B83280','#7A3EC7','#C0392B','#2E7D32','#5B6ABF'];
+const CHCOL = ['#6F5FC7','#3E9B7A','#4A80C9','#D18B4A','#4A93A8','#B3729C','#8E7BC9','#5FA07A','#C98A5E','#7A85C4'];
 
 
 
@@ -804,7 +890,7 @@ function lichSuSoLieu(cid){
 
 /* Đường có nền mờ — dùng cho xu hướng theo ngày */
 function areaChart(data,opt){
-  const o=Object.assign({w:700,h:190,pad:34,col:'#6D4AFF',fill:true,labels:[]},opt||{});
+  const o=Object.assign({w:700,h:190,pad:34,col:'#6F5FC7',fill:true,labels:[]},opt||{});
   const mx=Math.max(1,...data);
   const step=(o.w-o.pad-12)/Math.max(1,data.length-1);
   const y=v=>o.h-28-(v/mx)*(o.h-46);
@@ -868,7 +954,7 @@ function gauge(pct,label,col){
   const R=40,C=2*Math.PI*R;
   return `<div class="gauge"><svg width="104" height="104" viewBox="0 0 104 104">
     <circle cx="52" cy="52" r="${R}" fill="none" stroke="#EFEFF5" stroke-width="11"/>
-    <circle cx="52" cy="52" r="${R}" fill="none" stroke="${col||'#6D4AFF'}" stroke-width="11"
+    <circle cx="52" cy="52" r="${R}" fill="none" stroke="${col||'#6F5FC7'}" stroke-width="11"
       stroke-linecap="round" stroke-dasharray="${C}" stroke-dashoffset="${C*(1-pct/100)}"
       transform="rotate(-90 52 52)"/></svg>
     <div class="gauge-c"><b>${pct}%</b><span>${esc(label)}</span></div></div>`;
@@ -998,7 +1084,7 @@ function viewDash(){
           <span class="c2-lbl">Nhịp tuần này</span>
           <span class="c2-val ${n>=t?'ok':n>=t/2?'warn':'bad'}">${n}/${t} bài</span></span>
         <span class="c2-bar"><i class="${pc>=100?'ok':pc>=50?'':'warn'}" style="width:${pc}%"></i></span>
-        <span class="c2-spark">${spark(sp,pc>=100?'#12855A':'#6D4AFF')}</span>
+        <span class="c2-spark">${spark(sp,pc>=100?'#12855A':'#6F5FC7')}</span>
         <span class="c2-mtr">${(()=>{
           const kd=ckindOf(c), st=lastStat(c.id), pv=prevStat(c.id);
           const dl=(k)=>{ if(!st||!pv||st[k]==null||pv[k]==null||!pv[k]) return '';
@@ -1228,7 +1314,7 @@ function ringBlock(pct,label,items){
   return `<div class="ring-wrap"><div class="ring">
     <svg width="132" height="132" viewBox="0 0 132 132">
       <circle cx="66" cy="66" r="${R}" fill="none" stroke="#EFEFF5" stroke-width="13"/>
-      <circle cx="66" cy="66" r="${R}" fill="none" stroke="#6D4AFF" stroke-width="13"
+      <circle cx="66" cy="66" r="${R}" fill="none" stroke="#6F5FC7" stroke-width="13"
         stroke-linecap="round" stroke-dasharray="${C}" stroke-dashoffset="${C*(1-pct/100)}"/>
     </svg><div class="ring-c"><b>${pct}%</b><span>${esc(label)}</span></div></div>
     <div class="leg">${items.map(i=>`<div class="leg-i">
@@ -1422,7 +1508,7 @@ function viewTimeline(){
     const dn=ts.filter(x=>tgrp(x)==='Hoàn thành').length;
     const p=ts.length?Math.round(dn/ts.length*100):0;
     const l=pos(s.start), w=Math.max(2,pos(s.end)-l);
-    const col=s.status==='Đang chạy'?'#6D4AFF':s.status==='Đã kết thúc'?'#12855A':'#9797AC';
+    const col=s.status==='Đang chạy'?'#6F5FC7':s.status==='Đã kết thúc'?'#12855A':'#9797AC';
     return `<div class="tl-row"><span class="tl-nm">${esc(s.name)}
       <span class="pill pill-s ${s.status==='Đang chạy'?'s-pri':s.status==='Đã kết thúc'?'s-green':'s-gray'}">${esc(s.status)}</span></span>
       <span class="tl-tr"><span class="tl-bar" style="left:${l}%;width:${w}%;background:${col}">${ts.length?p+'%':''}</span>
@@ -1919,6 +2005,36 @@ function viewChannels(){
     <div class="chgrid">${list.map(card).join('')}</div>`;}).join('')}`;
 }
 
+
+/* Gợi ý link theo nền tảng đang chọn */
+const LINK_MAU={
+  'TikTok':{k:'https://www.tiktok.com/@',q:'https://www.tiktok.com/tiktokstudio/content'},
+  'Facebook':{k:'https://www.facebook.com/',q:'https://business.facebook.com/latest/insights'},
+  'Instagram':{k:'https://www.instagram.com/',q:'https://business.facebook.com/latest/insights'},
+  'YouTube':{k:'https://www.youtube.com/@',q:'https://studio.youtube.com'},
+  'Shopee':{k:'https://shopeefood.vn/',q:'https://food.shopee.vn/merchant'},
+  'Zalo':{k:'https://zalo.me/',q:'https://oa.zalo.me'},
+  'Google Maps':{k:'https://maps.google.com/?q=',q:'https://business.google.com'},
+  'Website':{k:'https://',q:null},
+};
+function veGoiYLink(){
+  const pl=(document.getElementById('cPlat')||{}).value||'TikTok';
+  const M=LINK_MAU[pl]||LINK_MAU.Website;
+  const g1=document.getElementById('linkGoiY'), g2=document.getElementById('adminGoiY');
+  if(g1) g1.innerHTML=`<button class="sug" data-fill="cLink|${esc(M.k)}">
+    ${icon('i-plus')}Dán mẫu ${esc(M.k)}</button>`;
+  if(g2) g2.innerHTML=M.q
+    ? `<button class="sug" data-fill="cAdmin|${esc(M.q)}">
+        ${icon('i-plus')}Trang quản trị ${esc(pl)}</button>`
+    : '<span style="font-size:11px;color:var(--ink3)">Nền tảng này không có trang quản trị riêng</span>';
+  document.querySelectorAll('[data-fill]').forEach(b=>b.onclick=()=>{
+    const [id,v]=b.dataset.fill.split('|');
+    const e=document.getElementById(id);
+    if(e){ if(!e.value||e.value===v) e.value=v; else e.value=v; e.focus();
+      e.setSelectionRange(e.value.length,e.value.length); }
+  });
+}
+
 function openChanEdit(id){
   const c=id?CHANNELS.find(x=>x.id===id):null;
   const isNew=!c;
@@ -1935,6 +2051,16 @@ function openChanEdit(id){
     <input type="text" id="cName" class="fld" value="${esc(d.name||'')}" placeholder="@tenkenh hoặc Fanpage ABC">
     <div class="dr-lab">Vai trò của kênh</div>
     <input type="text" id="cRole" class="fld" value="${esc(d.role||'')}" placeholder="Kênh chính bán hàng / kênh phụ nuôi tệp…">
+
+    <div class="dr-lab">${icon('i-ext')}Link kênh <span style="font-weight:400;color:var(--ink3)">— bấm mở thẳng kênh</span></div>
+    <input type="text" id="cLink" class="fld" value="${esc(d.link||'')}"
+      placeholder="https://www.tiktok.com/@tenkenh">
+    <div class="sugs" style="margin-top:7px" id="linkGoiY"></div>
+
+    <div class="dr-lab">Link trang quản trị <span style="font-weight:400;color:var(--ink3)">— nơi lấy số liệu</span></div>
+    <input type="text" id="cAdmin" class="fld" value="${esc(d.admin_link||'')}"
+      placeholder="Không bắt buộc">
+    <div class="sugs" style="margin-top:7px" id="adminGoiY"></div>
     <div class="two"><div><div class="dr-lab">Phụ trách nội dung</div>
       <select id="cOwnC" class="fld">${MEMBERS.filter(m=>m.kind!=='design').map(m=>
         `<option ${m.name===(d.owner_content||'')?'selected':''}>${esc(m.name)}</option>`).join('')}</select></div>
@@ -1959,14 +2085,16 @@ function openChanEdit(id){
       <button class="btn btn-gh danger" id="cDel">${icon('i-trash')}Xoá kênh</button></div>`:''}`);
   document.querySelectorAll('[data-plat]').forEach(b=>b.onclick=()=>{
     document.querySelectorAll('[data-plat]').forEach(x=>x.classList.toggle('on',x===b));
-    document.getElementById('cPlat').value=b.dataset.plat;});
+    document.getElementById('cPlat').value=b.dataset.plat; veGoiYLink();});
+  veGoiYLink();
   document.getElementById('cSave').onclick=async()=>{
     if(!V('cName')){toast('Nhập tên kênh đã nhé');return;}
     const pl=document.getElementById('cPlat').value;
     const row={name:V('cName'),platform:pl,stream:(PLAT[pl]||{}).stream||'social',
       role:V('cRole')||null,owner_content:V('cOwnC'),owner_design:V('cOwnD'),
       target_week:+V('cTgt')||0,followers:+V('cFol')||0,priority:V('cPri'),
-      budget_month:+V('cBud')||0,style:V('cStyle')||null};
+      budget_month:+V('cBud')||0,style:V('cStyle')||null,
+      link:V('cLink')||null,admin_link:V('cAdmin')||null};
     if(isNew) await add('channels',{...row,spent_month:0},'Đã thêm kênh '+row.name);
     else await save('channels',id,row,'Đã lưu cấu hình kênh');
   };
@@ -2183,12 +2311,18 @@ function viewDesk(k){
 
 /* ─── Sửa · Lưu trữ · Xoá ─── */
 function rowActions(kind,id){
-  const canDel=can(kind==='tasks'?'task.delete':'post.create');
+  const r=({posts:POSTS,tasks:TASKS,members:MEMBERS,reports:REPORTS,channels:CHANNELS,
+    projects:PROJECTS,ads:ADS,promos:PROMOS,budget:BUDGET,risks:RISKS,
+    docs:DOCS,meetings:MEETS}[kind]||[]).find(x=>x.id===id);
+  const sua=duocSua(kind,r);
+  const xoa=duocXoa(kind,r)&&can(kind==='tasks'?'task.delete':'post.create');
+  if(!sua) return `<div class="permhint" style="margin-top:16px">${icon('i-lock')}
+    <span>${esc(loiKhongQuyen(kind,r))}</span></div>`;
   return `<div class="dr-lab">Thao tác</div>
-    <div class="act-row${canDel?'':' two-col'}">
+    <div class="act-row${xoa?'':' two-col'}">
       <button class="btn btn-gh" id="axEdit">${icon('i-pen')}Sửa</button>
       <button class="btn btn-gh" id="axArch">${icon('i-box')}Lưu trữ</button>
-      ${canDel?`<button class="btn btn-gh danger" id="axDel">${icon('i-trash')}Xoá</button>`:''}
+      ${xoa?`<button class="btn btn-gh danger" id="axDel">${icon('i-trash')}Xoá</button>`:''}
     </div>`;
 }
 function bindActions(kind,id,item){
@@ -2271,27 +2405,112 @@ function editPost(p){
 }
 
 /* ─── Màn hình Lưu trữ ─── */
+let LTWHO='me';
 function viewArchive(){
   const at=ALL_TASKS.filter(x=>x.archived), ap=ALL_POSTS.filter(x=>x.archived);
-  const row=(x,k)=>`<div class="titem">
-    <span class="pill s-gray">${esc(x.status)}</span>
-    <div class="tn" data-${k==='tasks'?'task':'post'}-arch="${x.id}"><b>${esc(x.name||x.title)}</b>
-      <small>${esc(x.area||x.channel||'')} · ${esc(x.owner||x.writer||'')}</small></div>
-    <span style="display:flex;gap:6px">
-      <button class="btn btn-gh btn-sm" data-restore="${k}:${x.id}">Khôi phục</button>
-      <button class="btn btn-gh btn-sm danger" data-purge="${k}:${x.id}">Xoá hẳn</button></span></div>`;
-  return ph('Lưu trữ','Việc và bài đã hoàn tất được cất đi — vẫn khôi phục lại được bất cứ lúc nào') + `
-  <div class="kpis">
-    ${kpi('gray','i-box','Đầu việc đã lưu',at.length)}
-    ${kpi('gray','i-pen','Bài đăng đã lưu',ap.length)}
-    ${kpi('green','i-check','Đang hoạt động',TASKS.length+POSTS.length)}
-  </div>
-  <div class="panel"><div class="panel-h"><b>${icon('i-check')} Đầu việc</b><small>${at.length}</small></div>
-    <div class="tlist">${at.length?at.map(x=>row(x,'tasks')).join(''):'<div class="empty">Chưa có gì trong lưu trữ</div>'}</div></div>
-  <div class="panel"><div class="panel-h"><b>${icon('i-pen')} Bài đăng</b><small>${ap.length}</small></div>
-    <div class="tlist">${ap.length?ap.map(x=>row(x,'posts')).join(''):'<div class="empty">Chưa có gì trong lưu trữ</div>'}</div></div>`;
-}
 
+  /* Vai trò của một người trong bài — dùng để biết bài đó "của ai" */
+  const vaiTrong=(p,n)=>{
+    const v=[];
+    if(p.writer===n) v.push({t:'Nội dung',c:'blue',ic:'i-pen'});
+    if(p.editor===n) v.push({t:'Thiết kế',c:'pink',ic:'i-brush'});
+    if(p.filmer===n) v.push({t:'Quay',c:'teal',ic:'i-cam'});
+    if(p.approved===n) v.push({t:'Duyệt',c:'amber',ic:'i-check'});
+    return v;
+  };
+  const lienQuan=(x,k,n)=>k==='tasks'
+    ? ((x.owner||'').includes(n)||x.assigner===n||x.reporter===n)
+    : (x.writer===n||x.editor===n||x.filmer===n||x.approved===n);
+
+  const ai = LTWHO==='all' ? null : (LTWHO==='me' ? ME.name : LTWHO);
+  const myT = ai ? at.filter(x=>lienQuan(x,'tasks',ai)) : at;
+  const myP = ai ? ap.filter(x=>lienQuan(x,'posts',ai)) : ap;
+
+  /* Thanh chọn người — mỗi người thấy phần của mình */
+  const dem=n=>at.filter(x=>lienQuan(x,'tasks',n)).length
+              +ap.filter(x=>lienQuan(x,'posts',n)).length;
+  const thanhNguoi=`<div class="whoseg">
+    <button class="wseg ${LTWHO==='me'?'on':''}" data-ltwho="me" style="--wc:#6F5FC7"
+      title="Phần lưu trữ của bạn">
+      ${avat(ME.name)}<span>Của tôi</span><i class="wn">${dem(ME.name)}</i></button>
+    ${(laLeader()?MEMBERS.filter(m=>m.name!==ME.name):[]).map(m=>
+      `<button class="wseg ${LTWHO===m.name?'on':''}" data-ltwho="${esc(m.name)}"
+        style="--wc:${(ROLES.find(r=>r.name===m.role)||{}).color||'#5A5A72'}"
+        title="${esc(m.name)} · ${esc(m.role)}">
+        ${avat(m.name)}<span>${esc(m.short_name||m.name.split(' ').slice(-1)[0])}</span>
+        <i class="wn">${dem(m.name)}</i></button>`).join('')}
+    ${laLeader()?`<button class="wseg ${LTWHO==='all'?'on':''}" data-ltwho="all" style="--wc:#5A5A72">
+      ${icon('i-users')}<span>Cả phòng</span><i class="wn">${at.length+ap.length}</i></button>`:''}
+  </div>`;
+
+  const row=(x,k)=>{
+    const vai = k==='posts' ? vaiTrong(x, ai||ME.name) : [];
+    const cuaAi = k==='tasks' ? (x.owner||'') : (x.writer||'');
+    const xoaDuoc = duocXoa(k,x);
+    return `<div class="arow">
+      <span class="pill pill-s s-gray">${esc(x.status)}</span>
+      <span class="ar-m" data-${k==='tasks'?'task':'post'}-arch="${x.id}">
+        <b>${esc(x.name||x.title)}</b>
+        <small>${esc(x.area||x.channel||'')}
+          ${k==='posts'&&x.pub_date?' · đăng '+fdate(x.pub_date):''}
+          ${k==='tasks'&&x.done_at?' · xong '+fdate(x.done_at):''}</small></span>
+      ${vai.length?`<span class="ar-vai">${vai.map(v=>
+        `<span class="vtag s-${v.c}">${icon(v.ic)}${esc(v.t)}</span>`).join('')}</span>`:''}
+      <span class="ar-ai">${avat(cuaAi||'?')}<b>${esc(cuaAi||'—')}</b></span>
+      <span class="ar-nut">
+        <button class="btn btn-gh btn-sm" data-restore="${k}:${x.id}">${icon('i-loop')}Khôi phục</button>
+        ${xoaDuoc?`<button class="btn btn-gh btn-sm danger" data-purge="${k}:${x.id}">${icon('i-trash')}Xoá hẳn</button>`:''}
+      </span></div>`;
+  };
+
+  /* Gom bài theo vai trò của người đang xem */
+  const nhomBai={};
+  myP.forEach(p=>{
+    const v=ai?vaiTrong(p,ai):[];
+    const k=v.length?v[0].t:'Khác';
+    (nhomBai[k]=nhomBai[k]||[]).push(p);
+  });
+  const NHOM_IC={'Nội dung':'i-pen','Thiết kế':'i-brush','Quay':'i-cam',
+    'Duyệt':'i-check','Khác':'i-box'};
+  const NHOM_MO={'Nội dung':'bài bạn viết, đã đăng xong',
+    'Thiết kế':'ấn phẩm bạn làm, đã bàn giao',
+    'Quay':'buổi quay bạn thực hiện, đã giao Editor',
+    'Duyệt':'bài bạn đã duyệt',
+    'Khác':'bài trong hệ thống'};
+
+  return ph('Lưu trữ',
+    ai?`Phần đã xong của ${ai===ME.name?'bạn':esc(ai)} — vẫn khôi phục lại được bất cứ lúc nào`
+      :'Toàn bộ việc và bài đã cất đi — vẫn khôi phục lại được') + `
+  <div class="statbar" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+    ${[['i-check','pri','Đầu việc đã xong',myT.length],
+       ['i-pen','blue','Bài đã lưu',myP.length],
+       ['i-box','gray','Tổng đã lưu',myT.length+myP.length],
+       ['i-loop','green','Đang hoạt động',TASKS.length+POSTS.length]]
+      .map(([ic,c,t,n])=>`<div class="stat s-${c} ${n?'':'zero'}">
+        <span class="stat-i">${icon(ic)}</span><span class="stat-v">${n}</span>
+        <span class="stat-t">${t}</span></div>`).join('')}
+  </div>
+  ${thanhNguoi}
+
+  ${myT.length?`<div class="panel"><div class="panel-h">
+    <b>${icon('i-check')} Đầu việc đã hoàn tất</b><small>${myT.length}</small></div>
+    <div>${myT.map(x=>row(x,'tasks')).join('')}</div></div>`:''}
+
+  ${Object.keys(nhomBai).length
+    ? Object.entries(nhomBai).map(([k,l])=>`<div class="panel"><div class="panel-h">
+        <b>${icon(NHOM_IC[k]||'i-box')} ${esc(k)}</b>
+        <small>${l.length} bài · ${esc(NHOM_MO[k]||'')}</small></div>
+        <div>${l.map(x=>row(x,'posts')).join('')}</div></div>`).join('')
+    : (myP.length?`<div class="panel"><div class="panel-h">
+        <b>${icon('i-pen')} Bài đăng</b><small>${myP.length}</small></div>
+        <div>${myP.map(x=>row(x,'posts')).join('')}</div></div>`:'')}
+
+  ${!myT.length&&!myP.length?`<div class="panel"><div class="empty">${icon('i-box')}<br><br>
+    ${ai===ME.name?'Bạn chưa cất gì vào lưu trữ.'
+      :ai?'Chưa có gì trong lưu trữ của '+esc(ai)+'.':'Lưu trữ đang trống.'}<br>
+    <span style="font-size:11.5px">Việc xong hoặc bài đã đăng, bấm Lưu trữ để cất đi cho danh sách gọn lại.</span>
+  </div></div>`:''}`;
+}
 
 /* ─── Sửa · Xoá cho mọi hạng mục ─── */
 const TBL_LABEL={projects:'dự án',risks:'rủi ro',docs:'tài liệu',meetings:'cuộc họp',
@@ -2408,7 +2627,7 @@ function viewProject(id){
 }
 
 function editProject(pr){
-  const isNew=!pr; const d=pr||{status:'Sắp bắt đầu',color:'#6D4AFF'};
+  const isNew=!pr; const d=pr||{status:'Sắp bắt đầu',color:'#6F5FC7'};
   openDrawer(`<div class="dr-code">${isNew?'Dự án mới':'Sửa dự án'}</div>
     <div class="dr-title">${isNew?'Tạo dự án':esc(pr.name)}</div>
     ${F_.txt('jName','Tên dự án',d.name,'Ví dụ: Khai trương cơ sở 3')}
@@ -2422,7 +2641,7 @@ function editProject(pr){
     <button class="btn btn-pri btn-full" id="jSave">${isNew?'Tạo dự án':'Lưu thay đổi'}</button>`);
   document.getElementById('jSave').onclick=async()=>{
     if(!V('jName')){toast('Nhập tên dự án đã nhé');return;}
-    const cols=['#6D4AFF','#0E7490','#D03535','#B26A00','#12855A','#B83280'];
+    const cols=['#6F5FC7','#0E7490','#D03535','#B26A00','#12855A','#B83280'];
     const row={name:V('jName'),code:V('jCode')||'DA'+(PROJECTS.length+1),owner:V('jOwn'),
       start:V('jS'),due:V('jE'),status:V('jSt'),budget:+V('jB')||0,note:V('jN')||null};
     if(isNew) await add('projects',{...row,progress:0,spent:0,
@@ -2494,7 +2713,7 @@ function browRow(p,opt){
   const st=norm(p.status), f=F(p.status);
   const h=holder(p);
   const isMine=h===ME.name;
-  const col=(typeof CONTENT_COL!=='undefined'&&CONTENT_COL[p.writer])||'#6D4AFF';
+  const col=(typeof CONTENT_COL!=='undefined'&&CONTENT_COL[p.writer])||'#6F5FC7';
   const late=latePost(p), d=dd(p.pub_date);
   const dsLate=p.film_date&&!p.film_done&&dd(p.film_date)<0
     &&norm(p.status)==='Đang quay';
@@ -2594,10 +2813,10 @@ const CONTENT_COL={};
 function viewWork(){
   /* ai đang được xem */
   const writers=MEMBERS.filter(m=>m.kind!=='design');
-  writers.forEach((m,i)=>CONTENT_COL[m.name]=['#6D4AFF','#0E7490','#C2410C','#7C3AED'][i%4]);
+  writers.forEach((m,i)=>CONTENT_COL[m.name]=['#6F5FC7','#4A93A8','#C98A5E','#B3729C'][i%4]);
   const target = WWHO==='all' ? null : (WWHO==='me' ? ME.name : WWHO);
   const mb = target ? MEMBERS.find(m=>m.name===target) : null;
-  const myColor = target ? (CONTENT_COL[target]||'#6D4AFF') : '#66667E';
+  const myColor = target ? (CONTENT_COL[target]||'#6F5FC7') : '#66667E';
 
   const cur=WCH?CHANNELS.find(c=>c.id===WCH):null;
   let scope=POSTS;
@@ -2611,7 +2830,7 @@ function viewWork(){
   const lateN=n=>POSTS.filter(p=>!DONE.includes(p.status)&&holds(p,n)&&latePost(p)).length;
   const whoBar=`<div class="whoseg">
     <button class="wseg ${WWHO==='me'?'on':''}" data-wwho="me"
-      style="--wc:${CONTENT_COL[ME.name]||'#6D4AFF'}" title="Việc của bạn">
+      style="--wc:${CONTENT_COL[ME.name]||'#6F5FC7'}" title="Việc của bạn">
       ${avat(ME.name)}<span>Việc của tôi</span>
       <i class="wn ${lateN(ME.name)?'late':''}">${cnt(ME.name)}</i></button>
     ${writers.filter(m=>m.name!==ME.name).map(m=>
@@ -3279,7 +3498,7 @@ function barChart(items,opt){
       Math.round(mx*(1-f))}${(opt&&opt.suffix)||''}</text>`).join('')}
     ${items.map((it,k)=>{const h=(it.v/mx)*(H-PB-14);
       return `<rect x="${PL+k*bw+bw*0.18}" y="${H-PB-h}" width="${bw*0.64}" height="${h}"
-        rx="4" fill="${it.c||'#6D4AFF'}"/>
+        rx="4" fill="${it.c||'#6F5FC7'}"/>
         <text x="${PL+k*bw+bw*0.5}" y="${H-PB-h-5}" font-size="9.5" fill="#54546B"
           text-anchor="middle" font-weight="600">${it.l||it.v}</text>`;}).join('')}
     ${items.map((it,k)=>`<text x="${PL+k*bw+bw*0.5}" y="${H-8}" font-size="9.5" fill="#9797AC"
@@ -3332,8 +3551,8 @@ function viewMetrics(){
     const r=rows.find(x=>x.c.id===MCH);
     if(!r){ MCH=0; return viewMetrics(); }
     const c=r.c, P=PLAT[c.platform]||{};
-    const ages=Object.entries(c.aud_age||{}).map(([t,v])=>({t,v,l:v+'%',c:P.color||'#6D4AFF'}));
-    const hours=(c.aud_hour||[]).map(h=>({t:h.h,v:h.v,l:h.v+'%',c:'#8B6BFF'}));
+    const ages=Object.entries(c.aud_age||{}).map(([t,v])=>({t,v,l:v+'%',c:P.color||'#6F5FC7'}));
+    const hours=(c.aud_hour||[]).map(h=>({t:h.h,v:h.v,l:h.v+'%',c:'#9B8DE0'}));
     const g=c.aud_gender||{'Nam':50,'Nữ':50};
     const gp=[{t:'Nam',v:g['Nam'],c:'#1F63C7'},{t:'Nữ',v:g['Nữ'],c:'#B83280'}];
     const gr=c.growth||[];
@@ -3387,9 +3606,9 @@ function viewMetrics(){
             ${[0,.5,1].map(f=>`<line x1="34" x2="552" y1="${12+f*110}" y2="${12+f*110}" stroke="#EDEDF3"/>`).join('')}
             ${[0,.5,1].map(f=>`<text x="2" y="${16+f*110}" font-size="9" fill="#9797AC">${kf(Math.round(mxg*(1-f)))}</text>`).join('')}
             <path d="${gr.map((v,k)=>(k?'L':'M')+(34+k*(518/Math.max(1,gr.length-1))).toFixed(0)+' '+(122-(v/mxg)*110).toFixed(0)).join(' ')}"
-              fill="none" stroke="${P.color||'#6D4AFF'}" stroke-width="2.6" stroke-linejoin="round"/>
+              fill="none" stroke="${P.color||'#6F5FC7'}" stroke-width="2.6" stroke-linejoin="round"/>
             ${gr.map((v,k)=>`<circle cx="${(34+k*(518/Math.max(1,gr.length-1))).toFixed(0)}"
-              cy="${(122-(v/mxg)*110).toFixed(0)}" r="3.6" fill="${P.color||'#6D4AFF'}"/>`).join('')}
+              cy="${(122-(v/mxg)*110).toFixed(0)}" r="3.6" fill="${P.color||'#6F5FC7'}"/>`).join('')}
           </svg>
           <div class="sparkx" style="padding-left:34px">${gr.map((_,k)=>'<span>T'+(k+1)+'</span>').join('')}</div>
           <div style="font-size:11.5px;color:var(--ink3);margin-top:6px">
@@ -3914,8 +4133,8 @@ function viewPerf(){
         ${[0,.25,.5,.75,1].map(f=>`<line x1="${PADL}" x2="${W-14}" y1="${18+f*(H-40)}" y2="${18+f*(H-40)}"
           stroke="#EDEDF3" stroke-width="1"/>`).join('')}
         ${[0,.5,1].map(f=>`<text x="4" y="${22+f*(H-40)}" font-size="9" fill="#9797AC">${Math.round(mxT*(1-f))}</text>`).join('')}
-        <path d="${path}" fill="none" stroke="#6D4AFF" stroke-width="2.4" stroke-linejoin="round"/>
-        ${pts.map((p,i)=>`<circle cx="${p[0].toFixed(0)}" cy="${p[1].toFixed(0)}" r="3.4" fill="#6D4AFF"/>`).join('')}
+        <path d="${path}" fill="none" stroke="#6F5FC7" stroke-width="2.4" stroke-linejoin="round"/>
+        ${pts.map((p,i)=>`<circle cx="${p[0].toFixed(0)}" cy="${p[1].toFixed(0)}" r="3.4" fill="#6F5FC7"/>`).join('')}
       </svg>
       <div class="sparkx">${trend.map(t=>{const d=new Date(t.k);
         return `<span class="${t.k===iso(D0())?'td':''}">${d.toLocaleDateString('vi-VN',{weekday:'short'})}</span>`;}).join('')}</div>
@@ -4101,48 +4320,218 @@ function editKudo(k){
 }
 
 /* ═════════ CƠ CẤU TỔ CHỨC ═════════ */
+let ORGTAB='so-do';
 function viewOrg(){
-  const kids=n=>MEMBERS.filter(m=>m.manager===n);
-  const node=(m,lv)=>{
-    const hp=POSTS.filter(p=>!DONE.includes(p.status)&&holds(p,m.name)).length;
-    const ht=TASKS.filter(t=>(t.owner||'').includes(m.name)&&!['Hoàn thành','Không áp dụng'].includes(tgrp(t))).length;
-    const ch=CHANNELS.filter(c=>c.owner_content===m.name||c.owner_design===m.name);
-    const sub=kids(m.name);
-    return `<div class="orgn" style="margin-left:${lv*26}px">
-      <div class="orgc" data-medit="${m.id}">
+  const leader=MEMBERS.find(m=>m.kind==='leader')||{};
+  const cap=+(SET.load_max||14);
+
+  /* Cây báo cáo: ai dưới quyền ai */
+  const duoiQuyen=n=>MEMBERS.filter(m=>m.manager===n);
+  const soVieс=n=>TASKS.filter(t=>(t.owner||'').includes(n)
+      &&!['Hoàn thành','Không áp dụng'].includes(tgrp(t))).length
+    +POSTS.filter(p=>!DONE.includes(p.status)&&holds(p,n)).length;
+
+  const the=(m,sau)=>{
+    const con=duoiQuyen(m.name);
+    const kenhND=CHANNELS.filter(c=>c.owner_content===m.name);
+    const kenhTK=CHANNELS.filter(c=>c.owner_design===m.name||c.owner_film===m.name);
+    const n=soVieс(m.name);
+    const R=ROLES.find(r=>r.name===m.role)||{};
+    return `<div class="onode" style="--oc:${R.color||'#6F5FC7'}">
+      <button class="on-card" data-hsopen="${esc(m.name)}">
         ${avat(m.name)}
-        <div class="orgt"><b>${esc(m.name)}</b><small>${esc(m.role)}</small></div>
-        <div class="orgm">
-          <span class="pill pill-s ${m.kind==='leader'?'s-pri':m.kind==='writer'?'s-blue':'s-pink'}">${
-            m.kind==='leader'?'Duyệt':m.kind==='writer'?'Viết':'Thiết kế'}</span>
-          ${hp+ht?`<span class="pill pill-s s-gray">${hp+ht} việc</span>`:''}
-          ${sub.length?`<span class="pill pill-s s-teal">quản lý ${sub.length}</span>`:''}</div>
-      </div>
-      ${ch.length?`<div class="orgch">${ch.map(c=>`<span class="orgchip" data-chan="${c.id}">${esc(c.name)}</span>`).join('')}</div>`:''}
-      ${sub.map(s=>node(s,lv+1)).join('')}</div>`;};
-  const roots=MEMBERS.filter(m=>!m.manager);
-  return ph('Cơ cấu tổ chức','Ai báo cáo cho ai, ai phụ trách kênh nào',
-    `<button class="btn btn-pri btn-sm" id="newMem2">${icon('i-plus')}Thêm nhân sự</button>`) + `
-  <div class="panel"><div class="panel-h"><b>Sơ đồ phòng</b>
-    <small>${MEMBERS.length} người · ${CHANNELS.length} kênh</small></div>
-    <div class="panel-b">${roots.map(m=>node(m,0)).join('')}</div></div>
-  <div class="grid2">
-    <div class="panel"><div class="panel-h"><b>Phân bổ kênh</b></div><div class="panel-b">
-      ${MEMBERS.map(m=>{const ch=CHANNELS.filter(c=>c.owner_content===m.name);
-        const dz=CHANNELS.filter(c=>c.owner_design===m.name);
-        if(!ch.length&&!dz.length) return '';
-        return `<div class="prow" data-who="${esc(m.name)}" style="cursor:pointer">
-          <span class="nm">${avat(m.name)}${esc(m.short_name||m.name)}</span>
-          <span class="ct">${ch.length?ch.length+' kênh nội dung':''}${ch.length&&dz.length?' · ':''}${
-            dz.length?dz.length+' kênh thiết kế':''}</span></div>`;}).join('')}
-    </div></div>
-    <div class="panel"><div class="panel-h"><b>Bộ phận</b></div><div class="panel-b">
-      ${[...new Set(MEMBERS.map(m=>m.dept).filter(Boolean))].map(d=>{
-        const l=MEMBERS.filter(m=>m.dept===d);
-        return `<div class="prow"><span class="nm">${icon('i-users')}${esc(d)}</span>
-          <span class="ct">${l.map(m=>esc(m.short_name||m.name)).join(', ')}</span></div>`;}).join('')}
-    </div></div>
-  </div>`;
+        <span class="on-t"><b>${esc(m.name)}</b><small>${esc(m.role)}</small></span>
+        <span class="on-r">
+          <span class="on-n ${n>cap?'over':''}">${n}</span>
+          <small>việc</small></span>
+      </button>
+      ${(kenhND.length||kenhTK.length)?`<div class="on-ch">
+        ${kenhND.length?`<span class="onch-g">${icon('i-pen')}${kenhND.length} kênh nội dung</span>`:''}
+        ${kenhTK.length?`<span class="onch-g">${icon('i-brush')}${kenhTK.length} kênh ấn phẩm</span>`:''}
+      </div>`:''}
+      ${con.length?`<div class="on-con">${con.map(c=>the(c,sau+1)).join('')}</div>`:''}
+    </div>`;
+  };
+
+  /* ── Tab 1: Sơ đồ báo cáo ── */
+  const soDo=`
+    <div class="panel"><div class="panel-h"><b>${icon('i-share')} Ai báo cáo cho ai</b>
+      <small>${MEMBERS.length} người · bấm vào tên để xem việc của họ</small></div>
+      <div class="panel-b"><div class="otree">${the(leader,0)}</div>
+        <div class="onote">${icon('i-alert')}
+          <span>Con số bên phải mỗi tên là số việc đang mở. Quá ${cap} việc thì tô đỏ —
+          dấu hiệu cần chia bớt.</span></div>
+      </div></div>
+
+    <div class="g21">
+      <div class="panel"><div class="panel-h"><b>Ai phụ trách kênh nào</b>
+        <small>${CHANNELS.length} kênh</small></div>
+        <div class="tbl-wrap"><table class="tbl"><thead><tr>
+          <th style="min-width:170px">Kênh</th><th>Nền tảng</th>
+          <th>Viết nội dung</th><th>Làm ấn phẩm</th><th>Nhịp/tuần</th></tr></thead><tbody>
+          ${CHANNELS.map(c=>`<tr data-mch="${c.id}">
+            <td class="tt">${esc(c.name)}</td>
+            <td><span class="pill pill-s s-gray">${esc(c.platform)}</span></td>
+            <td>${c.owner_content?whoCell(c.owner_content):'<span style="color:var(--red)">chưa giao</span>'}</td>
+            <td>${c.owner_design?whoCell(c.owner_design):'<span style="color:var(--ink3)">—</span>'}</td>
+            <td>${c.target_week||0} bài</td></tr>`).join('')}
+        </tbody></table></div></div>
+
+      <div class="panel"><div class="panel-h"><b>Bộ phận</b></div>
+        <div class="panel-b">${(()=>{
+          const bp={}; MEMBERS.forEach(m=>{(bp[m.dept||'Khác']=bp[m.dept||'Khác']||[]).push(m);});
+          return Object.entries(bp).map(([k,l])=>`<div class="odept">
+            <div class="od-h">${icon('i-users')}<b>${esc(k)}</b><span>${l.length} người</span></div>
+            <div class="od-l">${l.map(m=>`<span class="od-p" data-hsopen="${esc(m.name)}">
+              ${avat(m.name)}<span><b>${esc(m.short_name||m.name)}</b>
+              <small>${esc(m.role)}</small></span></span>`).join('')}</div>
+          </div>`).join('');})()}</div></div>
+    </div>`;
+
+  /* ── Tab 2: Quy trình làm việc ── */
+  const chang=[
+    {t:'Content lên nội dung',ai:'Content Marketing',ic:'i-pen',c:'blue',
+     lam:'Nghĩ ý tưởng, viết caption, kịch bản. Chuẩn bị brief cho bên thiết kế.',
+     xong:'Bấm Gửi Leader duyệt, hoặc Gửi thẳng thiết kế nếu Leader bận.'},
+    {t:'Leader duyệt nội dung',ai:'Leader Team',ic:'i-check',c:'amber',
+     lam:'Đọc nội dung, kiểm tra thông điệp có đúng hướng không.',
+     xong:'Duyệt cho đi tiếp, hoặc trả lại kèm góp ý cụ thể.'},
+    {t:'Quay video',ai:'Videographer',ic:'i-cam',c:'teal',
+     lam:'Chỉ với bài video. Nhận brief có ngày giờ, địa điểm, cảnh cần lấy.',
+     xong:'Quay xong bàn giao footage cho Editor dựng.'},
+    {t:'Thiết kế / dựng',ai:'Designer · Editor',ic:'i-brush',c:'pink',
+     lam:'Làm ấn phẩm hoặc dựng video theo brief. Hai bạn tự chia việc với nhau.',
+     xong:'Bấm Làm xong gửi Leader duyệt, hoặc Gửi thẳng Content nếu gấp.'},
+    {t:'Leader duyệt ấn phẩm',ai:'Leader Team',ic:'i-check',c:'amber',
+     lam:'Xem ảnh hoặc video cuối cùng trước khi lên sóng.',
+     xong:'Duyệt cho đăng, hoặc trả lại bên thiết kế sửa.'},
+    {t:'Content đăng bài',ai:'Content Marketing',ic:'i-send',c:'green',
+     lam:'Đăng lên nền tảng đúng giờ đã hẹn. Bài về đúng người viết ban đầu.',
+     xong:'Bấm Đã đăng. Sau 1–2 ngày quay lại nhập chỉ số.'},
+  ];
+  const quyTrinh=`
+    <div class="panel"><div class="panel-h"><b>${icon('i-loop')} Một bài đi qua những chặng nào</b>
+      <small>từ ý tưởng tới lên sóng</small></div>
+      <div class="panel-b"><div class="oflow">${chang.map((x,i)=>`
+        <div class="ofl">
+          <div class="ofl-l"><span class="ofl-n s-${x.c}">${i+1}</span>
+            ${i<chang.length-1?'<span class="ofl-line"></span>':''}</div>
+          <div class="ofl-b">
+            <div class="ofl-h">${icon(x.ic)}<b>${esc(x.t)}</b>
+              <span class="pill pill-s s-${x.c}">${esc(x.ai)}</span></div>
+            <div class="ofl-r"><i>Làm gì</i><span>${esc(x.lam)}</span></div>
+            <div class="ofl-r"><i>Xong thì</i><span>${esc(x.xong)}</span></div>
+          </div>
+        </div>`).join('')}</div>
+        <div class="onote">${icon('i-bolt')}
+          <span>Bài chỉ có ảnh thì bỏ qua chặng 3. Khi Leader bận, Content và Thiết kế
+          được đi tắt — bài sẽ có nhãn <b>chưa qua Leader</b> để Leader xem lại sau.</span></div>
+      </div></div>
+
+    <div class="panel"><div class="panel-h"><b>${icon('i-cal')} Nhịp làm việc</b></div>
+      <div class="panel-b"><div class="onhip">
+        <div class="onh"><span class="onh-t">Mỗi ngày</span>
+          <ul><li>Mở app, đọc popup nhắc việc đầu ngày</li>
+            <li>Xử lý việc quá hạn trước, rồi tới việc đến hạn hôm nay</li>
+            <li>Sau 16h nộp báo cáo ngày — hệ thống tự điền sẵn việc đã làm</li>
+            <li>Người trực nhật kiểm tra inbox và bình luận toàn kênh</li></ul></div>
+        <div class="onh"><span class="onh-t">Mỗi tuần</span>
+          <ul><li>Nhập chỉ số các kênh vào mục Kênh &amp; chỉ số</li>
+            <li>Rà lịch đăng và lịch quay tuần tới</li>
+            <li>Leader xem mục Guồng sản xuất để biết chặng nào đang tắc</li></ul></div>
+        <div class="onh"><span class="onh-t">Mỗi tháng</span>
+          <ul><li>Xem lại hiệu quả từng kênh, kênh nào hụt nhịp nhiều thì bàn lại</li>
+            <li>Chốt số khuyến mãi sàn, tính lại quán thực nhận bao nhiêu</li>
+            <li>Xuất dữ liệu sao lưu trong mục Quản trị</li></ul></div>
+      </div></div></div>`;
+
+  /* ── Tab 3: Từng vị trí làm gì ── */
+  const VI_TRI={
+    'Leader Team':{ic:'i-target',c:'pri',
+      viec:['Duyệt nội dung Content gửi lên','Duyệt ấn phẩm trước khi đăng',
+        'Giao việc xuống từng người, cân tải trọng','Quản ngân sách và quảng cáo',
+        'Theo dõi chỉ số kênh và guồng sản xuất'],
+      quyen:'Sửa được mọi thứ trong hệ thống',
+      man:['Leader Team','Duyệt & Giao việc','Quản trị','Ngân sách','Quảng cáo']},
+    'Content Marketing (chung)':{ic:'i-pen',c:'blue',
+      viec:['Viết nội dung cho Facebook, Instagram, Website, Zalo','Chuẩn bị brief cho thiết kế',
+        'Đăng bài đúng lịch','Nhập chỉ số sau khi đăng 1–2 ngày','Trả lời bình luận và tin nhắn'],
+      quyen:'Sửa bài và việc của mình, không đụng phần người khác',
+      man:['Content Marketing','Lịch đăng & quay','Báo cáo ngày']},
+    'Content Marketing TikTok':{ic:'i-pen',c:'blue',
+      viec:['Viết kịch bản video ngắn cho 5 kênh TikTok','Bắt trend, theo dõi nội dung đối thủ',
+        'Đặt lịch quay khi cần footage','Đăng và theo dõi chỉ số video'],
+      quyen:'Sửa bài và việc của mình',
+      man:['Content Marketing','Lịch đăng & quay','Báo cáo ngày']},
+    'Videographer':{ic:'i-cam',c:'teal',
+      viec:['Quay footage tại quán theo brief','Chuẩn bị máy, ánh sáng, đạo cụ trước buổi quay',
+        'Bàn giao footage cho Editor dựng','Tự thêm việc quay phát sinh'],
+      quyen:'Sửa việc quay của mình',
+      man:['Quay Video','Lịch đăng & quay','Báo cáo ngày']},
+    'Designer':{ic:'i-brush',c:'pink',
+      viec:['Thiết kế ảnh, poster, infographic, ấn phẩm in','Nhận brief từ Content',
+        'Tự chia việc với Editor','Gửi Leader duyệt khi xong'],
+      quyen:'Sửa ấn phẩm mình phụ trách',
+      man:['Designer','Báo cáo ngày']},
+    'Editor':{ic:'i-film',c:'pink',
+      viec:['Dựng video ngắn và video dài','Nhận footage từ bạn quay',
+        'Cắt clip, làm phụ đề, chèn nhạc','Gửi Leader duyệt khi xong'],
+      quyen:'Sửa video mình phụ trách',
+      man:['Editor Video','Báo cáo ngày']},
+  };
+  const viTri=`
+    <div class="ovtgrid">${MEMBERS.map(m=>{
+      const V=VI_TRI[m.role]||{ic:'i-users',c:'gray',viec:[],quyen:'',man:[]};
+      const R=ROLES.find(r=>r.name===m.role)||{};
+      const kenh=CHANNELS.filter(c=>c.owner_content===m.name||c.owner_design===m.name
+        ||c.owner_film===m.name);
+      return `<div class="ovt">
+        <div class="ovt-h">
+          <span class="ovt-i s-${V.c}">${icon(V.ic)}</span>
+          <span class="ovt-t">${avat(m.name)}<span><b>${esc(m.name)}</b>
+            <small>${esc(m.role)}</small></span></span>
+        </div>
+        <div class="ovt-b">
+          <div class="ovt-s"><i>Việc chính</i>
+            <ul>${V.viec.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div>
+          ${kenh.length?`<div class="ovt-s"><i>Phụ trách kênh</i>
+            <div class="ovt-k">${kenh.slice(0,6).map(c=>
+              `<span class="okenh">${icon(picon(c.platform))}${esc(c.name)}</span>`).join('')}
+              ${kenh.length>6?`<span class="okenh mute">+${kenh.length-6} kênh</span>`:''}</div></div>`:''}
+          <div class="ovt-s"><i>Báo cáo cho</i>
+            <span class="ovt-v">${m.manager?whoCell(m.manager):'không ai — là cấp cao nhất'}</span></div>
+          <div class="ovt-s"><i>Quyền hạn</i><span class="ovt-v">${esc(V.quyen)}</span></div>
+          ${V.man.length?`<div class="ovt-s"><i>Mục hay dùng</i>
+            <div class="ovt-k">${V.man.map(x=>`<span class="okenh mute">${esc(x)}</span>`).join('')}</div></div>`:''}
+        </div>
+      </div>`;}).join('')}</div>
+
+    <div class="panel"><div class="panel-h"><b>${icon('i-lock')} Quy tắc chung</b></div>
+      <div class="panel-b"><div class="oquy">
+        <div class="oq"><b>Mỗi người chỉ sửa việc của mình</b>
+          <span>Bài bạn viết, ấn phẩm bạn làm, việc giao cho bạn. Không đụng phần người khác.
+          Riêng Leader sửa được tất cả.</span></div>
+        <div class="oq"><b>Dự án, kênh, ngân sách chỉ Leader chỉnh</b>
+          <span>Cần đổi gì ở những mục này thì báo Leader.</span></div>
+        <div class="oq"><b>Việc phát sinh thì tự thêm</b>
+          <span>Bấm Thêm việc của tôi, chọn nguồn: phát sinh, BGĐ chỉ đạo, khách yêu cầu.
+          Để Leader biết bạn đang bận gì.</span></div>
+        <div class="oq"><b>Brief càng rõ càng ít làm lại</b>
+          <span>Giao thiết kế phải có brief. Đặt lịch quay phải ghi rõ quay gì, ở đâu, cần chuẩn bị gì.</span></div>
+        <div class="oq"><b>Số liệu phải nhập mới có ý nghĩa</b>
+          <span>Bài đăng 1–2 ngày thì vào nhập lượt xem, tương tác. Kênh thì nhập mỗi tuần một lần.</span></div>
+        <div class="oq"><b>Báo cáo ngày là bắt buộc</b>
+          <span>Cuối ngày hệ thống tự tổng hợp việc đã làm, chỉ cần xem lại rồi bấm gửi.</span></div>
+      </div></div></div>`;
+
+  const body={'so-do':soDo,'quy-trinh':quyTrinh,'vi-tri':viTri}[ORGTAB]||soDo;
+
+  return ph('Cơ cấu tổ chức','Cách phòng Marketing vận hành — dành cho cả người mới và người cũ')
+  + `<div class="tabs">
+      ${tabBtn('orgtab','so-do',ORGTAB,'i-share','Sơ đồ & phân công')}
+      ${tabBtn('orgtab','quy-trinh',ORGTAB,'i-loop','Quy trình làm việc')}
+      ${tabBtn('orgtab','vi-tri',ORGTAB,'i-users','Từng vị trí làm gì')}
+    </div>` + body;
 }
 
 /* ═════════ VAI TRÒ VÀ QUYỀN ═════════ */
@@ -4160,7 +4549,7 @@ function viewBudget(){
   const chBud=list.filter(b=>b.channel_id), prBud=list.filter(b=>!b.channel_id);
   const cats={}; list.forEach(b=>{cats[b.cat]=cats[b.cat]||{plan:0,spent:0};
     cats[b.cat].plan+=b.plan||0; cats[b.cat].spent+=b.spent||0;});
-  const COL=['#6D4AFF','#12855A','#B26A00','#1F63C7','#B83280','#0E7490','#D03535'];
+  const COL=['#6F5FC7','#12855A','#B26A00','#1F63C7','#B83280','#0E7490','#D03535'];
   const dist=Object.entries(cats).map(([k,v],i)=>({t:k,c:COL[i%COL.length],n:v.plan}));
   return ph('Ngân sách',(PROJ?'Dự án đang chọn':'Toàn bộ dự án')+' · kế hoạch và thực chi',
     can('budget.edit')?`<button class="btn btn-pri btn-sm" id="newBud">${icon('i-plus')}Thêm khoản</button>`:'') + `
@@ -4623,7 +5012,7 @@ function viewLeader(){
       ${MEMBERS.filter(m=>m.name!==ME.name).map(m=>{
         const n=demTheoNguoi(m.name);
         return `<button class="wseg ${LWHO===m.name?'on':''}" data-lwho="${esc(m.name)}"
-          style="--wc:${(ROLES.find(r=>r.name===m.role)||{}).color||'#6D4AFF'}"
+          style="--wc:${(ROLES.find(r=>r.name===m.role)||{}).color||'#6F5FC7'}"
           title="${esc(m.name)} · ${esc(m.role)}">
           ${avat(m.name)}<span>${esc(m.short_name||m.name.split(' ').slice(-1)[0])}</span>
           <i class="wn ${n?'late':''}">${n}</i></button>`;}).join('')}
@@ -5079,7 +5468,7 @@ function viewAdmin(){
 
   const tongQuan=`
     <div class="anly">
-      ${[['Sản lượng 7 ngày',out7,outP7,'#6D4AFF',outDay.slice(7),'việc xong + bài đăng'],
+      ${[['Sản lượng 7 ngày',out7,outP7,'#6F5FC7',outDay.slice(7),'việc xong + bài đăng'],
          ['Báo cáo đã nộp',rep7,repP7,'#12855A',repDay.slice(7),repRate+'% tỉ lệ nộp'],
          ['Bài đăng lên sóng',ALL_POSTS.filter(p=>D7.includes(p.pub_date)&&p.status==='Đã đăng').length,
           ALL_POSTS.filter(p=>P7.includes(p.pub_date)&&p.status==='Đã đăng').length,'#0E7490',
@@ -5103,7 +5492,7 @@ function viewAdmin(){
               ?' — đang giữ hoặc tăng nhịp.':' — nhịp đang chậm lại.'}</div></div></div>
       <div class="panel"><div class="panel-h"><b>Tỉ lệ hoàn tất</b></div>
         <div class="panel-b"><div class="gauges">
-          ${gauge(pcDone,'đầu việc','#6D4AFF')}
+          ${gauge(pcDone,'đầu việc','#6F5FC7')}
           ${gauge(pcOn,'đúng hạn',pcOn>=80?'#12855A':'#B26A00')}
           ${gauge(pcPost,'bài đã đăng','#0E7490')}
         </div></div></div>
@@ -5142,7 +5531,7 @@ function viewAdmin(){
             <span class="pct">${x.tk}</span></div></td>
           <td><b>${x.dn}</b></td><td>${x.op}</td>
           <td>${x.lt?`<span class="pill pill-s s-red">${x.lt}</span>`:'<span style="color:var(--ink3)">0</span>'}</td>
-          <td>${spark(x.spark,'#6D4AFF')}</td>
+          <td>${spark(x.spark,'#6F5FC7')}</td>
           <td><span class="pill pill-s ${x.pc>=80?'s-green':x.pc>=50?'s-amber':'s-red'}">${x.pc}%</span></td>
         </tr>`).join('')}
       </tbody></table></div></div>
@@ -5176,7 +5565,8 @@ function viewAdmin(){
       <small>${MEMBERS.length} người</small></div>
       <div class="tbl-wrap"><table class="tbl"><thead><tr>
         <th style="min-width:180px">Thành viên</th><th>Vai trò</th><th>Quản lý</th>
-        <th>Mã PIN</th><th>Số quyền</th><th>Đang giữ</th><th>Thao tác</th></tr></thead><tbody>
+        <th style="min-width:150px">Email đăng nhập</th><th>Số quyền</th><th>Đang giữ</th>
+        <th style="min-width:170px">Thao tác</th></tr></thead><tbody>
         ${MEMBERS.map(m=>{
           const nperm=PERMS.filter(p=>(p.vals||{})[m.role]&&p.vals[m.role]!=='Không').length;
           const busy=TASKS.filter(t=>(t.owner||'').includes(m.name)
@@ -5187,13 +5577,17 @@ function viewAdmin(){
             <small>${esc(m.dept||'')}</small></span></div></td>
             <td>${bad?`<span class="pill s-red">${esc(m.role)}</span>`:esc(m.role)}</td>
             <td>${m.manager?esc(m.manager):'<span style="color:var(--ink3)">—</span>'}</td>
-            <td><code class="pincode">${esc(m.pin||'')}</code></td>
+            <td>${m.email?`<code class="pincode">${esc(m.email)}</code>`
+              :'<span style="color:var(--red);font-size:11px">chưa có email</span>'}
+              ${m.pw_reset?'<div style="font-size:10px;color:var(--amber);margin-top:3px">chờ đổi mật khẩu</div>':''}</td>
             <td>${nperm}/${PERMS.length}</td>
             <td>${busy}</td>
             <td><span style="display:flex;gap:5px">
-              <button class="btn btn-gh btn-sm" data-medit="${m.id}">Sửa</button>
-              <button class="btn btn-gh btn-sm" data-ava="${m.id}">Ảnh</button>
-              <button class="btn btn-gh btn-sm" data-pin="${m.id}">Đổi PIN</button></span></td></tr>`;}).join('')}
+              ${laLeader()||m.name===ME.name?`<button class="btn btn-gh btn-sm" data-medit="${m.id}">Sửa</button>
+              <button class="btn btn-gh btn-sm" data-ava="${m.id}">Ảnh</button>`:''}
+              ${laLeader()?`<button class="btn btn-gh btn-sm" data-reset="${m.id}">Đặt lại mật khẩu</button>`:''}
+              ${!laLeader()&&m.name!==ME.name?'<span style="font-size:11px;color:var(--ink3)">—</span>':''}
+              </span></td></tr>`;}).join('')}
       </tbody></table></div>
       <div class="panel-b" style="border-top:1px solid var(--line)">
         <button class="btn btn-pri btn-full" id="adNewMem" style="margin:0">${icon('i-plus')}Thêm nhân sự</button></div></div>
@@ -5315,25 +5709,6 @@ function viewAdmin(){
 }
 
 /* Đổi PIN nhanh */
-function pinForm(id){
-  const m=MEMBERS.find(x=>x.id===id); if(!m) return;
-  openDrawer(`<div class="dr-code">Đổi mã PIN</div>
-    <div class="dr-title">${esc(m.name)}</div>
-    <div class="dr-meta">${esc(m.role)} · PIN hiện tại <code class="pincode">${esc(m.pin||'')}</code></div>
-    <div class="dr-lab">Mã PIN mới</div>
-    <input type="text" id="pinNew" class="fld" maxlength="6" inputmode="numeric"
-      placeholder="4 chữ số" value="">
-    <div style="font-size:11.5px;color:var(--ink3);margin-top:8px;line-height:1.6">
-      Nhớ báo lại cho ${esc(m.name.split(' ').slice(-1)[0])} sau khi đổi.
-      PIN chỉ là lớp chặn nhẹ, đừng dùng số dễ đoán như 1234.</div>
-    <button class="btn btn-pri btn-full" id="pinSave">Đổi PIN</button>`);
-  document.getElementById('pinSave').onclick=()=>{
-    const v=V('pinNew');
-    if(!/^\d{4,6}$/.test(v)){toast('PIN phải là 4 tới 6 chữ số');return;}
-    save('members',id,{pin:v},'Đã đổi PIN cho '+m.name);
-  };
-}
-
 /* Xuất CSV */
 function xuatCSV(kind){
   const src={tasks:TASKS,posts:POSTS,members:MEMBERS,channels:CHANNELS,
@@ -5641,6 +6016,8 @@ function bindAll(){
   document.querySelectorAll('[data-ltab]').forEach(b=>b.onclick=()=>{LTAB=b.dataset.ltab;render();});
   on('[data-lwho]',e=>{LWHO=e.dataset.lwho;render();});
   on('[data-seen]',e=>save('posts',+e.dataset.seen,{bypass_leader:null},'Đã đánh dấu xem qua'));
+  on('[data-ltwho]',e=>{LTWHO=e.dataset.ltwho;render();});
+  document.querySelectorAll('[data-orgtab]').forEach(b=>b.onclick=()=>{ORGTAB=b.dataset.orgtab;render();});
   on('[data-vtjump]',e=>{
     const k=e.dataset.vtjump;
     const el=document.querySelector(k==='writer'?'[data-sec="nd"]':k==='design'?'[data-sec="ap"]'
@@ -5654,7 +6031,7 @@ function bindAll(){
   if(b('btnBack')) b('btnBack').onclick=quayLai;
   if(b('ltGiao')) b('ltGiao').onclick=()=>go('assign');
   if(b('ltAdmin')) b('ltAdmin').onclick=()=>go('admin');
-  on('[data-pin]',e=>pinForm(+e.dataset.pin));
+  on('[data-reset]',e=>datLaiMatKhau(+e.dataset.reset));
   on('[data-ava]',e=>avatarForm(+e.dataset.ava));
   on('[data-export]',e=>xuatCSV(e.dataset.export));
   if(b('adNewMem')) b('adNewMem').onclick=()=>editMember(null);
@@ -5781,20 +6158,144 @@ document.querySelector('.drawer-close').onclick=closeDrawer;
 document.querySelector('.drawer-bg').onclick=closeDrawer;
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeDrawer();});
 
+
+
+/* ═══════ AI ĐƯỢC SỬA GÌ ═══════
+   Nguyên tắc: mỗi người chỉ động vào việc của mình.
+   Leader sửa được tất cả. */
+function laLeader(){ return ME && (ME.kind==='leader' || can('role.manage')); }
+
+/* Người này có liên quan tới bản ghi không */
+function laCuaToi(tbl,r){
+  if(!r) return true;                     /* tạo mới — xét riêng ở duocTao */
+  const t=(ME||{}).name;
+  switch(tbl){
+    case 'posts':
+      return r.writer===t || r.editor===t || r.filmer===t || r.handoff_by===t;
+    case 'tasks':
+      return (r.owner||'').includes(t) || r.assigner===t || r.reporter===t;
+    case 'reports':
+      return r.author===t || r.reviewer===t;
+    case 'approvals':
+      return r.requester===t || r.approver===t;
+    case 'kudos':
+      return r.from_who===t || r.to_who===t;
+    case 'channel_stats': {
+      const c=CHANNELS.find(x=>x.id===r.channel_id)||{};
+      return c.owner_content===t || c.owner_design===t || c.owner_film===t;
+    }
+    case 'members':
+      return r.name===t;                  /* chỉ sửa hồ sơ của chính mình */
+    case 'duty':
+      return r.who===t;
+    default:
+      return false;                        /* dự án, kênh, ngân sách, quảng cáo… chỉ Leader */
+  }
+}
+
+/* Bảng nào chỉ Leader được đụng */
+const BANG_LEADER=['projects','sprints','channels','budget','ads','promos',
+  'roles','perms','settings','risks','docs','meetings','activity'];
+
+function duocSua(tbl,r){
+  if(laLeader()) return true;
+  if(BANG_LEADER.includes(tbl)) return false;
+  return laCuaToi(tbl,r);
+}
+function duocXoa(tbl,r){
+  if(laLeader()) return true;
+  if(BANG_LEADER.includes(tbl)) return false;
+  if(tbl==='members') return false;        /* không ai tự xoá mình */
+  /* chỉ xoá được thứ chính mình tạo ra */
+  if(tbl==='tasks')  return r&&(r.assigner===ME.name||r.reporter===ME.name);
+  if(tbl==='posts')  return r&&r.writer===ME.name;
+  return laCuaToi(tbl,r);
+}
+function duocTao(tbl){
+  if(laLeader()) return true;
+  if(BANG_LEADER.includes(tbl)) return false;
+  if(tbl==='members') return can('member.manage');
+  return true;
+}
+/* Câu từ chối, nói rõ vì sao */
+function loiKhongQuyen(tbl,r){
+  if(BANG_LEADER.includes(tbl))
+    return 'Mục này chỉ Leader chỉnh được. Nhờ ' + LEADER() + ' hỗ trợ nhé.';
+  if(tbl==='members') return 'Bạn chỉ sửa được hồ sơ của chính mình.';
+  const ai = r ? (r.owner||r.writer||r.author||r.who||'') : '';
+  return ai ? 'Đây là việc của ' + ai + ', bạn không sửa được.'
+            : 'Bạn không có quyền sửa mục này.';
+}
+
+/* Dịch lỗi cơ sở dữ liệu sang tiếng Việt cho dễ hiểu */
+function loiTiengViet(err,tbl){
+  const m=(err&&(err.message||err.hint))||String(err||'');
+  if(/duplicate key.*members_name_key|members_name_key/i.test(m))
+    return 'Tên này đã có người dùng rồi. Mỗi người phải có tên khác nhau.';
+  if(/duplicate key.*settings/i.test(m)) return 'Mục cấu hình này đã tồn tại.';
+  if(/duplicate key/i.test(m)) return 'Đã có bản ghi trùng. Kiểm tra lại tên hoặc mã.';
+  if(/violates foreign key/i.test(m))
+    return 'Mục này đang được nơi khác dùng, không xoá hoặc đổi được.';
+  if(/violates not-null/i.test(m)) return 'Còn ô bắt buộc chưa điền.';
+  if(/Could not find the '([\w_]+)' column/i.test(m))
+    return 'Cơ sở dữ liệu thiếu cột — chạy file supabase/SUA-LOI-THIEU-COT.sql trong Supabase.';
+  if(/JWT|apikey|Invalid API/i.test(m)) return 'Khoá kết nối không hợp lệ. Kiểm tra config.js.';
+  if(/Failed to fetch|NetworkError/i.test(m)) return 'Mất kết nối mạng. Thử lại sau giây lát.';
+  if(/permission denied|row-level security/i.test(m))
+    return 'Không có quyền ghi. Chạy file supabase/fix-quyen.sql trong Supabase.';
+  if(/invalid input syntax for type (\w+)/i.test(m))
+    return 'Có ô nhập sai định dạng (chữ ở nơi cần số, hoặc ngày sai).';
+  return m;
+}
+
+/* Bỏ cột chưa có trong cơ sở dữ liệu rồi thử lại — tránh chặn cả thao tác */
+function cotThieu(err){
+  const m=/Could not find the '([\w_]+)' column/.exec(err&&(err.message||err.hint||'')||'');
+  return m?m[1]:null;
+}
+async function ghiAnToan(tbl,patch,id){
+  let p={...patch}, boQua=[];
+  for(let i=0;i<6;i++){
+    const q = id ? sb.from(tbl).update(p).eq('id',id) : sb.from(tbl).insert(p);
+    const {error}=await q;
+    if(!error) return {ok:true,boQua};
+    const c=cotThieu(error);
+    if(c&&c in p){ delete p[c]; boQua.push(c); continue; }
+    return {ok:false,error};
+  }
+  return {ok:false,error:{message:'Thử lại quá nhiều lần'}};
+}
+
 async function save(tbl,id,patch,msg){
+  const cu=({posts:POSTS,tasks:TASKS,members:MEMBERS,reports:REPORTS,approvals:APPROVALS,
+    channels:CHANNELS,projects:PROJECTS,ads:ADS,promos:PROMOS,budget:BUDGET,
+    risks:RISKS,docs:DOCS,meetings:MEETS,duty:DUTY,kudos:KUDOS,
+    channel_stats:STATS}[tbl]||[]).find(x=>x.id===id);
+  if(!duocSua(tbl,cu)){ toast(loiKhongQuyen(tbl,cu)); return false; }
   /* Ghi lại ngày thực sự hoàn thành để báo cáo tự tổng hợp đúng */
   if(tbl==='tasks'&&patch.status&&tgrp({status:patch.status})==='Hoàn thành') patch.done_at=iso(new Date());
   if(tbl==='tasks'&&patch.status&&tgrp({status:patch.status})!=='Hoàn thành') patch.done_at=null;
   if(tbl==='tasks'&&patch.status==='Đang làm'){const cu=TASKS.find(x=>x.id===id);
     if(cu&&!cu.started_at) patch.started_at=iso(new Date());}
-  const {error}=await sb.from(tbl).update({...patch,updated_by:ME.name}).eq('id',id);
-  if(error){toast('Lỗi: '+error.message);return false;}
-  toast(msg); closeDrawer(); await loadAll(); return true;
+  const kq=await ghiAnToan(tbl,{...patch,updated_by:ME.name},id);
+  if(!kq.ok){toast(loiTiengViet(kq.error,tbl));return false;}
+  if(kq.boQua.length){
+    console.warn('Cơ sở dữ liệu thiếu cột:',kq.boQua.join(', '),
+      '— chạy file supabase/CAP-NHAT-TAT-CA.sql để bổ sung');
+    toast(msg+' (chưa lưu được: '+kq.boQua.join(', ')+')');
+  } else toast(msg);
+  closeDrawer(); await loadAll(); return true;
 }
 async function add(tbl,row,msg){
-  const {error}=await sb.from(tbl).insert({...row,updated_by:ME.name});
-  if(error){toast('Không lưu được: '+error.message);return false;}
-  toast(msg); closeDrawer(); await loadAll(); return true;
+  if(!duocTao(tbl)){ toast(loiKhongQuyen(tbl,null)); return false; }
+  const kq=await ghiAnToan(tbl,{...row,updated_by:ME.name},null);
+  if(!kq.ok){toast(loiTiengViet(kq.error,tbl));return false;}
+  if(kq.boQua.length){
+    console.warn('Cơ sở dữ liệu thiếu cột:',kq.boQua.join(', '),
+      '— chạy file supabase/CAP-NHAT-TAT-CA.sql để bổ sung');
+    toast(msg+' (chưa lưu được: '+kq.boQua.join(', ')+')');
+  } else toast(msg);
+  closeDrawer(); await loadAll(); return true;
 }
 const V=id=>{const e=document.getElementById(id);return e?e.value.trim():'';};
 
@@ -6739,6 +7240,158 @@ function logoForm(){
   };
 }
 
+
+/* ═══════ HỒ SƠ CÁ NHÂN ═══════ */
+function hoSoCuaToi(ten){
+  const m=MEMBERS.find(x=>x.name===(ten||ME.name)); if(!m) return;
+  const laToi=m.name===ME.name;
+  const suaDuoc=laToi||laLeader();
+
+  /* Số liệu của người này */
+  const tk=TASKS.filter(t=>(t.owner||'').includes(m.name));
+  const dangLam=tk.filter(t=>!['Hoàn thành','Không áp dụng'].includes(tgrp(t)));
+  const xong=tk.filter(t=>tgrp(t)==='Hoàn thành');
+  const ps=POSTS.filter(p=>!DONE.includes(p.status)&&holds(p,m.name));
+  const daDang=POSTS.filter(p=>p.writer===m.name&&p.status==='Đã đăng');
+  const daTK=POSTS.filter(p=>p.editor===m.name&&p.design_done);
+  const daQuay=POSTS.filter(p=>p.filmer===m.name&&p.film_done);
+  const tre=dangLam.filter(lateTask).length+ps.filter(latePost).length;
+  const cap=+(SET.load_max||14);
+  const tai=Math.min(100,Math.round((dangLam.length+ps.length)/cap*100));
+  const kenh=CHANNELS.filter(c=>c.owner_content===m.name||c.owner_design===m.name
+    ||c.owner_film===m.name);
+  const R=ROLES.find(r=>r.name===m.role)||{};
+  const quyen=PERMS.filter(p=>(p.vals||{})[m.role]&&p.vals[m.role]!=='Không');
+
+  /* Báo cáo 7 ngày */
+  const D7=[]; for(let i=6;i>=0;i--){const d=new Date(D0());d.setDate(d.getDate()-i);D7.push(iso(d));}
+  const nop=D7.filter(k=>REPORTS.some(r=>r.author===m.name&&r.date===k&&r.status!=='Chưa nộp')).length;
+
+  openDrawer(`
+    <div class="hs-head" style="--hc:${R.color||'#6F5FC7'}">
+      <div class="hs-av">${suaDuoc
+        ? `<button id="hsAvBtn" title="Đổi ảnh">${avat(m.name)}
+            <span class="hs-cam">${icon('i-cam')}</span></button>`
+        : avat(m.name)}</div>
+      <div class="hs-t">
+        <b>${esc(m.name)}</b>
+        <span class="hs-role">${esc(m.role)}</span>
+        <small>${esc(m.dept||'')}${m.manager?' · báo cáo cho '+esc(m.manager):''}</small>
+      </div>
+    </div>
+
+    <div class="hs-num">
+      <div><b>${dangLam.length+ps.length}</b><span>đang làm</span></div>
+      <div><b class="${tre?'bad':''}">${tre}</b><span>quá hạn</span></div>
+      <div><b>${xong.length}</b><span>việc đã xong</span></div>
+      <div><b>${daDang.length+daTK.length+daQuay.length}</b><span>bài đã ra</span></div>
+    </div>
+
+    <div class="dr-lab">Tải trọng</div>
+    <div class="hs-tai">
+      <span class="bar"><i class="${tai>=100?'bad':tai>=70?'warn':'ok'}" style="width:${tai}%"></i></span>
+      <b>${dangLam.length+ps.length}/${cap}</b>
+    </div>
+    <div class="hs-note">${tai>=100?'Đang quá tải — nên báo Leader chia bớt việc.'
+      :tai>=70?'Khá đầy việc, cân nhắc trước khi nhận thêm.'
+      :'Còn nhận thêm việc được.'}</div>
+
+    ${kenh.length?`<div class="dr-lab">Kênh phụ trách</div>
+      <div class="hs-kenh">${kenh.map(c=>`<span class="okenh">${icon(picon(c.platform))}${esc(c.name)}</span>`).join('')}</div>`:''}
+
+    <div class="dr-lab">Nếp làm việc 7 ngày</div>
+    <div class="hs-week">${D7.map(k=>{
+      const co=REPORTS.some(r=>r.author===m.name&&r.date===k&&r.status!=='Chưa nộp');
+      const d=new Date(k);
+      return `<span class="hw ${co?'on':''}" title="${fdate(k)}">
+        <i>${['CN','T2','T3','T4','T5','T6','T7'][d.getDay()]}</i></span>`;}).join('')}
+      <span class="hw-t">${nop}/7 ngày có báo cáo</span></div>
+
+    <div class="dr-lab">Quyền hạn · ${quyen.length}/${PERMS.length} mục</div>
+    <div class="hs-quyen">${quyen.slice(0,8).map(p=>
+      `<span class="hq">${esc(p.name)}</span>`).join('')}
+      ${quyen.length>8?`<span class="hq mute">+${quyen.length-8} quyền khác</span>`:''}</div>
+
+    ${suaDuoc?`
+      <div class="dr-lab">Sửa hồ sơ</div>
+      <div class="two"><div>
+        <label class="hs-lb">Tên hiển thị</label>
+        <input type="text" id="hsName" class="fld" value="${esc(m.name)}"></div>
+        <div><label class="hs-lb">Tên gọi ngắn</label>
+        <input type="text" id="hsShort" class="fld" value="${esc(m.short_name||'')}"
+          placeholder="${esc(m.name.split(' ').slice(-1)[0])}"></div></div>
+      <label class="hs-lb">Email đăng nhập</label>
+      <input type="text" id="hsMail" class="fld" value="${esc(m.email||'')}"
+        placeholder="ten@kieufoods.vn" ${laLeader()?'':'readonly title="Nhờ Leader đổi email"'}>
+      ${laToi?`<button class="hs-g" id="hsPw" style="margin-top:12px;width:100%">
+        ${icon('i-lock')}Đổi mật khẩu</button>`:''}
+      ${laLeader()&&!laToi?`<button class="hs-g" id="hsReset" style="margin-top:12px;width:100%">
+        ${icon('i-lock')}Đặt lại mật khẩu cho ${esc(m.name.split(' ').slice(-1)[0])}</button>`:''}
+      <input type="hidden" id="avaVal" value="${esc(m.avatar||'')}">
+      <input type="file" id="avaFile" accept="image/*" hidden>
+      <button class="btn btn-pri btn-full" id="hsSave">${icon('i-check')}Lưu hồ sơ</button>
+      ${laLeader()&&!laToi?`<div class="permhint" style="margin-top:12px">${icon('i-lock')}
+        <span>Bạn đang sửa hồ sơ của ${esc(m.name)} với quyền Leader.</span></div>`:''}
+    `:`<div class="permhint" style="margin-top:16px">${icon('i-lock')}
+      <span>Chỉ ${esc(m.name)} và Leader sửa được hồ sơ này.</span></div>`}
+
+    <div class="dr-lab">Xem nhanh</div>
+    <div class="hs-goto">
+      <button class="hs-g" data-hsgo="tasks">${icon('i-check')}Đầu việc của ${esc(m.short_name||m.name.split(' ').slice(-1)[0])}</button>
+      <button class="hs-g" data-hsgo="archive">${icon('i-box')}Lưu trữ</button>
+      ${laToi?`<button class="hs-g" data-hsgo="reports">${icon('i-doc')}Báo cáo ngày</button>`:''}
+    </div>`);
+
+  /* Đổi ảnh */
+  if(suaDuoc){
+    const bd=document.getElementById('hsAvBtn');
+    const file=document.getElementById('avaFile');
+    const val=document.getElementById('avaVal');
+    if(bd) bd.onclick=()=>file.click();
+    if(file) file.onchange=()=>{
+      const f=file.files&&file.files[0]; if(!f) return;
+      if(f.size>8*1024*1024){toast('Ảnh quá lớn, chọn ảnh dưới 8MB');return;}
+      const rd=new FileReader();
+      rd.onload=e=>{const img=new Image();
+        img.onload=()=>{
+          const S=160,c=document.createElement('canvas');c.width=S;c.height=S;
+          const ctx=c.getContext('2d');
+          const side=Math.min(img.width,img.height);
+          ctx.drawImage(img,(img.width-side)/2,(img.height-side)/2,side,side,0,0,S,S);
+          val.value=c.toDataURL('image/jpeg',0.82);
+          if(bd) bd.innerHTML=`<span class="av img" style="background-image:url('${val.value}')"></span>
+            <span class="hs-cam">${icon('i-cam')}</span>`;
+          toast('Đã chọn ảnh — nhớ bấm Lưu hồ sơ');
+        };
+        img.src=e.target.result;};
+      rd.readAsDataURL(f);
+    };
+    const bpw=document.getElementById('hsPw');
+    if(bpw) bpw.onclick=()=>{closeDrawer();doiMatKhau(false);};
+    const brs=document.getElementById('hsReset');
+    if(brs) brs.onclick=()=>{closeDrawer();datLaiMatKhau(m.id);};
+    document.getElementById('hsSave').onclick=async()=>{
+      const ten=(V('hsName')||'').trim();
+      if(!ten){toast('Nhập tên đã nhé');return;}
+      const trung=MEMBERS.find(x=>x.name.trim().toLowerCase()===ten.toLowerCase()&&x.id!==m.id);
+      if(trung){toast('Đã có "'+trung.name+'" rồi, đặt tên khác nhé');return;}
+      const mail=(V('hsMail')||'').trim().toLowerCase();
+      if(mail&&!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(mail)){toast('Email chưa đúng định dạng');return;}
+      const tm=MEMBERS.find(x=>(x.email||'').toLowerCase()===mail&&x.id!==m.id);
+      if(tm){toast('Email này đã dùng cho '+tm.name);return;}
+      const ok=await save('members',m.id,{name:ten,
+        short_name:V('hsShort')||ten.split(' ').slice(-1)[0],
+        email:mail||null, avatar:val.value||null},'Đã lưu hồ sơ');
+      if(ok&&laToi&&ten!==ME.name){ ME=MEMBERS.find(x=>x.id===m.id)||ME; }
+    };
+  }
+  document.querySelectorAll('[data-hsgo]').forEach(b=>b.onclick=()=>{
+    closeDrawer();
+    if(b.dataset.hsgo==='tasks'){ TQ=m.name; go('tasks'); }
+    else go(b.dataset.hsgo);
+  });
+}
+
 /* ─── Chọn ảnh đại diện ─── */
 function avatarPicker(cur,name){
   return `<div class="dr-lab">Ảnh đại diện</div>
@@ -6806,6 +7459,7 @@ const ROLE_PRESET=[
   {r:'Content Marketing TikTok',  k:'writer', d:'tiktok', dept:'Nội dung'},
   {r:'Designer',           k:'design', d:'design', dept:'Thiết kế'},
   {r:'Editor',             k:'design', d:'edit',   dept:'Thiết kế'},
+  {r:'Videographer',       k:'film',   d:'film',   dept:'Sản xuất'},
   {r:'Chạy quảng cáo',     k:'writer', d:'',       dept:'Digital'},
   {r:'Cộng tác viên',      k:'writer', d:'',       dept:'Nội dung'},
 ];
@@ -6820,7 +7474,8 @@ function editMember(m){
     <div class="dr-lab">Vị trí</div>
     <div class="chpick">${ROLE_PRESET.map(p=>`<button class="chp ${p.r===d.role?'on':''}" data-role="${esc(p.r)}"
       data-kind="${p.k}" data-desk="${p.d}" data-dept="${esc(p.dept)}">
-      <span class="chp-d" style="background:${p.k==='leader'?'#6D4AFF':p.k==='design'?'#B83280':'#1F63C7'}"></span>
+      <span class="chp-d" style="background:${p.k==='leader'?'#6F5FC7':p.k==='design'?'#B83280'
+        :p.k==='film'?'#0E7490':'#1F63C7'}"></span>
       <span><b>${esc(p.r)}</b><small>${esc(p.dept)}</small></span></button>`).join('')}</div>
     <input type="hidden" id="mbRole" value="${esc(d.role||'')}">
     <input type="hidden" id="mbKind" value="${esc(d.kind||'writer')}">
@@ -6852,7 +7507,11 @@ function editMember(m){
     document.querySelectorAll('[data-kind-pick]').forEach(x=>x.classList.toggle('on',x===b));
     document.getElementById('mbKind').value=b.dataset.kindPick;});
   document.getElementById('mbSave').onclick=async()=>{
-    if(!V('mbName')){toast('Nhập họ tên đã nhé');return;}
+    const ten=(V('mbName')||'').trim();
+    if(!ten){toast('Nhập họ tên đã nhé');return;}
+    const trung=MEMBERS.find(x=>x.name.trim().toLowerCase()===ten.toLowerCase()&&(!m||x.id!==m.id));
+    if(trung){toast('Đã có "'+trung.name+'" trong danh sách. Đặt tên khác đi nhé.');
+      const el=document.getElementById('mbName'); if(el){el.focus();el.select();} return;}
     if(!V('mbRole')){toast('Chọn vị trí đã nhé');return;}
     const mgr=V('mbMgr'); const g=id=>document.getElementById(id).value;
     const row={name:V('mbName'),short_name:V('mbShort')||V('mbName').split(' ').slice(-1)[0],
@@ -7118,6 +7777,35 @@ function openAlerts(){
     ${sec('Sắp đến hạn đăng',soon,p=>postRow(p,true))}
     ${sec('Đầu việc quá hạn',lt,taskRow)}`);
   bindAll();
+}
+
+/* ─── Khởi động ─── */
+async function boot(){
+  let why='';
+  let {data,error}=await sb.from('members').select('*').order('sort_order');
+  if(error){
+    console.error('LỖI KẾT NỐI SUPABASE:', error);
+    why = /JWT|apikey|Invalid/i.test(error.message||'')
+      ? 'Chế độ xem thử — <b>khoá Supabase không hợp lệ</b>. Kiểm tra lại config.js.'
+      : 'Chế độ xem thử — lỗi kết nối: '+esc(error.message||'không rõ');
+  } else if(!data||!data.length){
+    console.error('Kết nối được nhưng bảng members trả về RỖNG. '
+      +'Chạy file supabase/fix-quyen.sql trong Supabase SQL Editor.');
+    why = 'Chế độ xem thử — <b>đọc được máy chủ nhưng không thấy dữ liệu</b>. '
+      +'Chạy file <b>supabase/fix-quyen.sql</b> trong Supabase → SQL Editor.';
+  }
+  if(error||!data||!data.length){ DEMO_MODE=true; sb=demoClient(); DEMO_WHY=why;
+    ({data}=await sb.from('members').select('*').order('sort_order')); }
+  MEMBERS=data||[];
+  if(DEMO_MODE) showDemoBanner(whyDemo());
+  apDungLogo();
+  /* nhớ email lần trước */
+  try{ const m=localStorage.getItem('mktos_mail');
+    if(m){ const e=document.getElementById('lgEmail'); if(e) e.value=m; }
+  }catch(e){}
+  const e=document.getElementById('lgEmail');
+  const p=document.getElementById('lgPw');
+  setTimeout(()=>{ if(e&&!e.value) e.focus(); else if(p) p.focus(); },250);
 }
 
 boot();
