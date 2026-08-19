@@ -2425,3 +2425,46 @@ html[data-theme="dark"] .lgin{background:var(--soft);border-color:var(--line2)}
 .sl-l span{display:inline-flex;align-items:center;gap:6px;background:var(--card);
   border-radius:99px;padding:3px 10px;font-size:10.5px;font-weight:700}
 .sl-l i{font-style:normal;color:var(--ink3);font-weight:500}
+.cleanrow.canh-bao{background:var(--amber-s);border-radius:10px;padding-left:12px;
+  margin:0 -12px}
+.lechrow{display:grid;gap:7px;padding:12px 0;border-bottom:1px solid var(--line)}
+.lechrow:last-of-type{border:0}
+.lech-t b{display:block;font-size:13px;font-weight:700}
+.lech-t small{display:block;font-size:11px;color:var(--ink3);margin-top:2px}
+.lechrow .fld{margin:0}
+
+/* ══ Dải ca làm việc ══ */
+.cabar{display:flex;align-items:center;gap:16px;background:var(--card);border-radius:15px;
+  padding:13px 18px;margin-bottom:16px;box-shadow:var(--sh);border-left:3px solid var(--line2);
+  flex-wrap:wrap;cursor:default;transition:.15s}
+.cabar.s-green{border-left-color:var(--green)}
+.cabar.s-amber{border-left-color:var(--amber)}
+.cabar.s-blue{border-left-color:var(--blue)}
+.cabar.s-gray{border-left-color:var(--line2)}
+.ca-i{width:36px;height:36px;border-radius:12px;display:flex;align-items:center;
+  justify-content:center;flex:0 0 36px;background:var(--soft);color:var(--ink3)}
+.cabar.s-green .ca-i{background:var(--green-s);color:var(--green)}
+.cabar.s-amber .ca-i{background:var(--amber-s);color:var(--amber)}
+.cabar.s-blue .ca-i{background:var(--blue-s);color:var(--blue)}
+.ca-i .ic{width:18px;height:18px}
+.ca-t{flex:0 0 auto;min-width:0}
+.ca-t b{display:block;font-size:14px;font-weight:700;line-height:1.3}
+.ca-t small{display:block;font-size:11.5px;color:var(--ink3);margin-top:2px}
+.ca-moc{display:flex;gap:6px;flex:1;flex-wrap:wrap;justify-content:center;min-width:0}
+.ca-m{display:flex;flex-direction:column;align-items:center;gap:2px;padding:5px 12px;
+  border-radius:10px;background:var(--soft);min-width:66px}
+.ca-m i{font-style:normal;font-size:12.5px;font-weight:700;color:var(--ink3);
+  font-variant-numeric:tabular-nums}
+.ca-m{font-size:9.5px;color:var(--ink3)}
+.ca-m.qua{background:var(--pri-s)}
+.ca-m.qua i{color:var(--pri)}
+.ca-now{text-align:right;flex:0 0 auto}
+.ca-now b{display:block;font-size:19px;font-weight:800;letter-spacing:-.5px;
+  font-variant-numeric:tabular-nums;line-height:1}
+.ca-now small{display:block;font-size:10px;color:var(--ink3);margin-top:3px}
+@media(max-width:900px){
+  .cabar{gap:11px;padding:12px 14px}
+  .ca-moc{order:3;flex:1 1 100%;justify-content:flex-start;padding-top:10px;
+    border-top:1px solid var(--line)}
+  .ca-now{margin-left:auto}
+}

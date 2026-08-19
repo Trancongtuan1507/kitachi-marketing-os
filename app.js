@@ -543,6 +543,7 @@ async function vaoApp(m){
   await loadAll();
   khoiPhucMuc();
   batDauTuTaiLai();
+  batDongHoCa();
   setTimeout(showNhac, 450);
 }
 document.getElementById('logout').onclick=()=>{
@@ -1309,8 +1310,7 @@ function viewDash(){
     ({i:'i-check',c:'pri',t:'Hoàn thành '+t.name,s:(t.area||'')+' · '+(t.owner||'')})))
     .slice(0,4);
 
-  const hh=new Date().getHours();
-  const greet=hh<11?'Chào buổi sáng':hh<14?'Chào buổi trưa':hh<18?'Chào buổi chiều':'Chào buổi tối';
+  const greet=loiChao();
   const urgent=lateT.length+latePs.length;
   const lead=urgent
     ? `Có ${urgent} việc đang quá hạn. Bắt đầu từ việc ảnh hưởng lớn nhất để nhanh chóng lấy lại nhịp.`
@@ -1333,11 +1333,12 @@ function viewDash(){
   return `
   <div class="hero2">
     <div class="hero2-tag">${icon('i-bolt')} MARKETING COMMAND CENTER</div>
-    <h2>${greet}, ${esc(ME.name)}</h2>
+    <h2><span id="greetTxt">${greet}</span>, ${esc(ME.name)}</h2>
     <div class="hero2-sub">${new Date().toLocaleDateString('vi-VN',{weekday:'long',day:'2-digit',month:'2-digit',year:'numeric'})}
       · Quảng Ngãi · còn ${dd(SET.opening_date)} ngày tới khai trương cơ sở 2</div>
     <div class="hero2-lead">${esc(lead)}</div>
   </div>
+  ${daiCa()}
 
   ${dayBar()}
   <div class="kpis4">
@@ -4887,6 +4888,8 @@ function viewSetup(){
           <span class="setu"><input type="number" id="setLoad" class="fld" value="${SET.load_max||14}" ${ed?'':'disabled'}> việc/người</span></div>
         <div class="setrow"><span class="setl">Giờ đăng mặc định</span>
           <input type="time" id="setTime" class="fld" value="${SET.default_time||'19:30'}" ${ed?'':'disabled'}></div>
+        <div class="setrow"><span class="setl">Giờ làm việc</span>
+          <span class="setu"><button class="btn btn-gh btn-sm" id="setCa">Chỉnh giờ</button></span></div>
         <div class="setrow"><span class="setl">Logo &amp; tên thương hiệu</span>
           <span class="setu"><button class="btn btn-gh btn-sm" id="setLogo">Đổi logo</button></span></div>
         <div class="setrow"><span class="setl">Giao diện</span>
@@ -6234,6 +6237,8 @@ function bindAll(){
   if(b('adNewMem')) b('adNewMem').onclick=()=>editMember(null);
   if(b('adRoles')) b('adRoles').onclick=()=>go('roles');
   if(b('setLogo')) b('setLogo').onclick=()=>logoForm();
+  if(b('setCa')) b('setCa').onclick=()=>caForm();
+  if(b('caBar')) b('caBar').onclick=()=>{ if(laLeader()) caForm(); };
   if(b('slNow')) b('slNow').onclick=()=>saoLuuNgay('slNowT');
   if(b('slBack')) b('slBack').onclick=()=>phucHoiForm();
   if(b('clLech')) b('clLech').onclick=()=>suaTenLechForm();
@@ -7442,6 +7447,143 @@ function logoForm(){
 
 
 
+
+/* ═══════ CA LÀM VIỆC ═══════ */
+const CA_MAC_DINH={ sang_vao:'08:00', sang_ra:'12:00',
+  chieu_vao:'13:30', chieu_ra:'17:30', thu7:true, cn:false };
+function caLamViec(){
+  const g=k=>SET['ca_'+k]||CA_MAC_DINH[k];
+  return { sv:g('sang_vao'), sr:g('sang_ra'), cv:g('chieu_vao'), cr:g('chieu_ra'),
+    thu7:String(SET.ca_thu7??(CA_MAC_DINH.thu7?'1':'0'))==='1',
+    cn:String(SET.ca_cn??(CA_MAC_DINH.cn?'1':'0'))==='1' };
+}
+const phutCua=hhmm=>{const [h,m]=String(hhmm||'0:0').split(':').map(Number);return h*60+(m||0);};
+const hienGio=p=>String(Math.floor(p/60)).padStart(2,'0')+':'+String(p%60).padStart(2,'0');
+function conBaoLau(p){
+  if(p<=0) return 'ngay bây giờ';
+  const h=Math.floor(p/60), m=p%60;
+  return h ? (m?`${h} giờ ${m} phút`:`${h} giờ`) : `${m} phút`;
+}
+/* Đang ở chặng nào của ngày làm việc */
+function trangThaiCa(luc){
+  const d=luc||new Date();
+  const C=caLamViec();
+  const p=d.getHours()*60+d.getMinutes();
+  const t=d.getDay();                       /* 0 = Chủ nhật */
+  const nghiHomNay = (t===0&&!C.cn) || (t===6&&!C.thu7);
+  if(nghiHomNay) return {ma:'nghi-tuan', t:'Hôm nay nghỉ',
+    d:t===0?'Chủ nhật':'Thứ Bảy', ic:'i-heart', c:'gray', pt:0};
+
+  const sv=phutCua(C.sv), sr=phutCua(C.sr), cv=phutCua(C.cv), cr=phutCua(C.cr);
+  const tong=(sr-sv)+(cr-cv);
+  const daLam=p<sv?0 : p<sr?(p-sv) : p<cv?(sr-sv) : p<cr?((sr-sv)+(p-cv)) : tong;
+  const pt=tong?Math.round(daLam/tong*100):0;
+
+  if(p<sv)  return {ma:'chua-vao', t:'Chưa tới giờ làm',
+    d:`Vào ca lúc ${C.sv} · còn ${conBaoLau(sv-p)}`, ic:'i-clock', c:'gray', pt:0};
+  if(p<sr)  return {ma:'sang', t:'Ca sáng',
+    d:`Nghỉ trưa lúc ${C.sr} · còn ${conBaoLau(sr-p)}`, ic:'i-bolt', c:'green', pt};
+  if(p<cv)  return {ma:'nghi-trua', t:'Nghỉ trưa',
+    d:`Vào ca chiều lúc ${C.cv} · còn ${conBaoLau(cv-p)}`, ic:'i-heart', c:'amber', pt};
+  if(p<cr)  return {ma:'chieu', t:'Ca chiều',
+    d:`Tan làm lúc ${C.cr} · còn ${conBaoLau(cr-p)}`, ic:'i-bolt', c:'green', pt};
+  return {ma:'tan-lam', t:'Đã tan làm',
+    d:`Ca sáng mai bắt đầu ${C.sv}`, ic:'i-check', c:'blue', pt:100};
+}
+/* Lời chào theo giờ thật, tính lại mỗi lần vẽ */
+function loiChao(){
+  const h=new Date().getHours();
+  return h<11?'Chào buổi sáng' : h<13?'Chào buổi trưa'
+       : h<18?'Chào buổi chiều' : h<22?'Chào buổi tối' : 'Khuya rồi';
+}
+/* Dải ca làm việc hiện ở Trang chủ */
+function daiCa(){
+  const S=trangThaiCa(), C=caLamViec();
+  const d=new Date(), gio=String(d.getHours()).padStart(2,'0')
+    +':'+String(d.getMinutes()).padStart(2,'0');
+  const moc=[['Vào ca',C.sv],['Nghỉ trưa',C.sr],['Vào chiều',C.cv],['Tan làm',C.cr]];
+  const p=d.getHours()*60+d.getMinutes();
+  return `<div class="cabar s-${S.c}" id="caBar">
+    <span class="ca-i">${icon(S.ic)}</span>
+    <span class="ca-t"><b>${esc(S.t)}</b><small>${esc(S.d)}</small></span>
+    <span class="ca-moc">${moc.map(([n,v])=>{
+      const qua=p>=phutCua(v);
+      return `<span class="ca-m ${qua?'qua':''}"><i>${esc(v)}</i>${esc(n)}</span>`;}).join('')}</span>
+    <span class="ca-now"><b>${gio}</b><small>${S.pt}% ngày làm việc</small></span>
+  </div>`;
+}
+/* Tự cập nhật dải ca và lời chào mỗi phút */
+let CA_TIMER=null;
+function batDongHoCa(){
+  if(CA_TIMER) clearInterval(CA_TIMER);
+  CA_TIMER=setInterval(()=>{
+    const b=document.getElementById('caBar');
+    if(b){ const tam=document.createElement('div');
+      tam.innerHTML=daiCa(); b.replaceWith(tam.firstElementChild); }
+    const g=document.getElementById('greetTxt');
+    if(g) g.textContent=loiChao();
+  }, 30000);
+}
+
+
+/* Cấu hình giờ làm việc */
+function caForm(){
+  if(!laLeader()){toast('Chỉ Leader chỉnh giờ làm được');return;}
+  const C=caLamViec();
+  openDrawer(`<div class="dr-code">Cài đặt</div>
+    <div class="dr-title">Giờ làm việc</div>
+    <div class="dr-meta">Dùng để hiện dải ca ở Trang chủ và nhắc nộp báo cáo trước giờ tan làm.</div>
+
+    <div class="dr-lab">Ca sáng</div>
+    <div class="two">
+      <div><label class="hs-lb">Vào ca</label>
+        <input type="time" id="caSV" class="fld" value="${C.sv}"></div>
+      <div><label class="hs-lb">Nghỉ trưa</label>
+        <input type="time" id="caSR" class="fld" value="${C.sr}"></div></div>
+
+    <div class="dr-lab">Ca chiều</div>
+    <div class="two">
+      <div><label class="hs-lb">Vào ca</label>
+        <input type="time" id="caCV" class="fld" value="${C.cv}"></div>
+      <div><label class="hs-lb">Tan làm</label>
+        <input type="time" id="caCR" class="fld" value="${C.cr}"></div></div>
+
+    <div class="dr-lab">Ngày làm việc</div>
+    <label class="rfck" style="gap:9px;margin-bottom:8px">
+      <input type="checkbox" id="caT7" ${C.thu7?'checked':''}><span></span>
+      <span style="font-size:12.5px">Làm thứ Bảy</span></label>
+    <label class="rfck" style="gap:9px">
+      <input type="checkbox" id="caCN" ${C.cn?'checked':''}><span></span>
+      <span style="font-size:12.5px">Làm Chủ nhật</span></label>
+
+    <div class="notice" style="margin-top:14px">
+      <span class="ni">${icon('i-clock')}</span>
+      <span><b>Đang áp dụng</b>
+        <p id="caXem">${esc(C.sv)}–${esc(C.sr)}, nghỉ trưa, ${esc(C.cv)}–${esc(C.cr)}
+        · tổng ${((phutCua(C.sr)-phutCua(C.sv)+phutCua(C.cr)-phutCua(C.cv))/60).toFixed(1)} giờ mỗi ngày</p></span></div>
+
+    <button class="btn btn-pri btn-full" id="caSave">${icon('i-check')}Lưu giờ làm</button>`);
+  const xem=()=>{
+    const sv=V('caSV'),sr=V('caSR'),cv=V('caCV'),cr=V('caCR');
+    const t=(phutCua(sr)-phutCua(sv)+phutCua(cr)-phutCua(cv))/60;
+    const e=document.getElementById('caXem');
+    if(e) e.textContent=`${sv}–${sr}, nghỉ trưa, ${cv}–${cr} · tổng ${t.toFixed(1)} giờ mỗi ngày`;
+  };
+  ['caSV','caSR','caCV','caCR'].forEach(id=>{
+    const e=document.getElementById(id); if(e) e.oninput=xem;});
+  document.getElementById('caSave').onclick=async()=>{
+    const sv=V('caSV'),sr=V('caSR'),cv=V('caCV'),cr=V('caCR');
+    if(phutCua(sr)<=phutCua(sv)){toast('Giờ nghỉ trưa phải sau giờ vào ca');return;}
+    if(phutCua(cv)<phutCua(sr)){toast('Giờ vào chiều phải sau giờ nghỉ trưa');return;}
+    if(phutCua(cr)<=phutCua(cv)){toast('Giờ tan làm phải sau giờ vào chiều');return;}
+    const rows=[['ca_sang_vao',sv],['ca_sang_ra',sr],['ca_chieu_vao',cv],['ca_chieu_ra',cr],
+      ['ca_thu7',document.getElementById('caT7').checked?'1':'0'],
+      ['ca_cn',document.getElementById('caCN').checked?'1':'0']];
+    for(const [k,v] of rows) await sb.from('settings').upsert({key:k,value:v});
+    toast('Đã lưu giờ làm việc'); closeDrawer(); await loadAll();
+  };
+}
+
 /* ═══════ SAO LƯU TOÀN BỘ ═══════ */
 const BANG_SAO_LUU=['members','roles','perms','projects','sprints','channels','channel_stats',
   'tasks','posts','budget','ads','promos','reports','approvals','kudos','duty','risks',
@@ -8108,7 +8250,8 @@ function nhacViec(){
   /* 5. Báo cáo ngày */
   const rp=REPORTS.find(r=>r.author===ME.name&&r.date===td);
   const chuaNop=!rp||rp.status==='Chưa nộp'||rp.status==='Yêu cầu sửa';
-  const gioMuon=new Date().getHours()>=16;
+  const gioMuon=(new Date().getHours()*60+new Date().getMinutes())
+    >= phutCua(caLamViec().cr)-90;   /* 90 phút trước giờ tan làm */
   if(chuaNop&&gioMuon) G.push({lv:'teal',ic:'i-doc',
     t:rp&&rp.status==='Yêu cầu sửa'?'Báo cáo bị trả lại, cần sửa':'Chưa nộp báo cáo hôm nay',
     d:'Cuối ngày nhớ ghi lại việc đã làm',l:[],go:'reports',btn:'Nộp báo cáo'});
@@ -8129,8 +8272,7 @@ function nhacViec(){
 
   if(!G.length) return null;
   const tong=G.reduce((a,g)=>a+(g.l.length||1),0);
-  const gio=new Date().getHours();
-  const chao=gio<11?'Chào buổi sáng':gio<14?'Chào buổi trưa':gio<18?'Chào buổi chiều':'Chào buổi tối';
+  const chao=loiChao();
 
   return `<div class="nhac">
     <div class="nhac-h">
