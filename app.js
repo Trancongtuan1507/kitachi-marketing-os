@@ -62,10 +62,12 @@ function demoClient(){
 }
 
 const LIB_OK = (typeof supabase!=='undefined' && supabase && supabase.createClient);
+let THAT_SB=null;
 if (CONFIGURED && !LIB_OK) DEMO_MODE = true;
 let sb = (CONFIGURED && LIB_OK)
   ? supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY)
   : demoClient();
+THAT_SB = (CONFIGURED && LIB_OK) ? sb : null;   /* giữ lại để còn thử nối lại */
 
 /* ─── Quy trình sản xuất nội dung: mỗi chặng gắn với một vai ─── */
 const FLOW = [
@@ -424,10 +426,13 @@ async function docPhien(){
   if(Date.now()-(p.at||0) > PHIEN_NGAY*864e5){ xoaPhien(); return null; }
   const m=MEMBERS.find(x=>x.id===p.id)
     || MEMBERS.find(x=>(x.email||'').toLowerCase()===p.mail);
-  if(!m){ xoaPhien(); return null; }
+  if(!m){ if(!DEMO_MODE) xoaPhien(); return null; }
   /* mật khẩu đổi rồi thì phiên hết hiệu lực */
   const sig=await bamMK('sess|'+m.id+'|'+(m.pw||m.pin||''));
-  if(sig && p.sig && sig!==p.sig){ xoaPhien(); return null; }
+  if(sig && p.sig && sig!==p.sig){
+    if(!DEMO_MODE) xoaPhien();      /* mật khẩu đổi thật thì mới bỏ phiên */
+    return null;
+  }
   return m;
 }
 
@@ -5774,6 +5779,13 @@ function viewAdmin(){
         <div class="cleanrow"><span class="cl-t"><b>Bài đã đăng quá 30 ngày</b>
           <small>${donePold} bài — số liệu vẫn giữ trong báo cáo</small></span>
           <button class="btn btn-gh btn-sm" id="clOldPost" ${donePold?'':'disabled'}>Lưu trữ hết</button></div>
+        ${(()=>{const l=raTenLech();
+          return `<div class="cleanrow ${l.length?'canh-bao':''}">
+            <span class="cl-t"><b>Tên không khớp nhân sự</b>
+            <small>${l.length?l.length+' tên lệch: '+l.slice(0,3).map(x=>x.ten).join(', ')
+              +(l.length>3?'…':''):'mọi tên đều khớp'}</small></span>
+            <button class="btn btn-gh btn-sm ${l.length?'danger':''}" id="clLech">
+              ${l.length?'Sửa ngay':'Kiểm tra'}</button></div>`;})()}
         <div class="cleanrow"><span class="cl-t"><b>Đang trong lưu trữ</b>
           <small>${arT} đầu việc, ${arP} bài đăng</small></span>
           <button class="btn btn-gh btn-sm" data-goto="archive">Mở lưu trữ</button></div>
@@ -6224,6 +6236,7 @@ function bindAll(){
   if(b('setLogo')) b('setLogo').onclick=()=>logoForm();
   if(b('slNow')) b('slNow').onclick=()=>saoLuuNgay('slNowT');
   if(b('slBack')) b('slBack').onclick=()=>phucHoiForm();
+  if(b('clLech')) b('clLech').onclick=()=>suaTenLechForm();
   if(b('mnSave')) b('mnSave').onclick=async()=>{
     const map={};
     document.querySelectorAll('[data-mv]').forEach(c=>{
@@ -7548,6 +7561,122 @@ function phucHoiForm(){
   };
 }
 
+
+/* ═══════ ĐỔI TÊN NGƯỜI · cập nhật mọi nơi đang ghi tên cũ ═══════ */
+const NOI_GHI_TEN=[
+  ['posts','writer'],['posts','editor'],['posts','filmer'],['posts','approved'],['posts','handoff_by'],
+  ['tasks','owner'],['tasks','assigner'],['tasks','reporter'],
+  ['reports','author'],['reports','reviewer'],
+  ['approvals','requester'],['approvals','approver'],
+  ['channels','owner_content'],['channels','owner_design'],['channels','owner_film'],
+  ['members','manager'],['duty','who'],['kudos','from_who'],['kudos','to_who'],
+  ['ads','owner'],['promos','owner'],['risks','owner'],['projects','owner'],['meetings','host'],
+];
+/* Đếm xem tên này đang được ghi ở bao nhiêu chỗ */
+function demNoiGhiTen(ten){
+  const N=({posts:ALL_POSTS,tasks:ALL_TASKS,reports:REPORTS,approvals:APPROVALS,
+    channels:CHANNELS,members:MEMBERS,duty:DUTY,kudos:KUDOS,ads:ADS,promos:PROMOS,
+    risks:RISKS,projects:PROJECTS,meetings:MEETS});
+  let n=0;
+  NOI_GHI_TEN.forEach(([b,c])=>{
+    (N[b]||[]).forEach(r=>{ if(String(r[c]||'')===ten) n++; });
+  });
+  return n;
+}
+/* Đổi tên ở mọi bảng */
+async function doiTenKhapNoi(cu,moi){
+  const N=({posts:ALL_POSTS,tasks:ALL_TASKS,reports:REPORTS,approvals:APPROVALS,
+    channels:CHANNELS,members:MEMBERS,duty:DUTY,kudos:KUDOS,ads:ADS,promos:PROMOS,
+    risks:RISKS,projects:PROJECTS,meetings:MEETS});
+  let xong=0, loi=0;
+  /* gom theo bảng để ghi ít lần */
+  const theoBang={};
+  NOI_GHI_TEN.forEach(([b,c])=>{
+    (N[b]||[]).forEach(r=>{
+      if(String(r[c]||'')!==cu) return;
+      theoBang[b]=theoBang[b]||{};
+      theoBang[b][r.id]=theoBang[b][r.id]||{};
+      theoBang[b][r.id][c]=moi;
+    });
+  });
+  for(const [b,rows] of Object.entries(theoBang)){
+    for(const [id,patch] of Object.entries(rows)){
+      try{
+        const {error}=await sb.from(b).update(patch).eq('id',+id);
+        if(error){ console.warn('Lỗi đổi tên',b,id,error.message); loi++; }
+        else xong++;
+      }catch(e){ console.warn('Lỗi đổi tên',b,id,e); loi++; }
+    }
+  }
+  /* owner của tasks có thể ghi nhiều người, tách bằng dấu phẩy */
+  for(const t of (N.tasks||[])){
+    const o=String(t.owner||'');
+    if(o.includes(cu)&&o!==cu){
+      try{ await sb.from('tasks').update({owner:o.split(',').map(x=>
+        x.trim()===cu?moi:x.trim()).join(', ')}).eq('id',t.id); xong++; }
+      catch(e){ loi++; }
+    }
+  }
+  return {xong,loi};
+}
+
+
+/* ─── Rà tên lệch: dữ liệu ghi tên không còn ai mang ─── */
+function raTenLech(){
+  const N={posts:ALL_POSTS,tasks:ALL_TASKS,reports:REPORTS,approvals:APPROVALS,
+    channels:CHANNELS,members:MEMBERS,duty:DUTY,kudos:KUDOS,ads:ADS,promos:PROMOS,
+    risks:RISKS,projects:PROJECTS,meetings:MEETS};
+  const co=new Set(MEMBERS.map(m=>m.name));
+  const la={};
+  NOI_GHI_TEN.forEach(([b,c])=>{
+    (N[b]||[]).forEach(r=>{
+      String(r[c]||'').split(',').map(x=>x.trim()).filter(Boolean).forEach(t=>{
+        if(t==='Không cần'||t==='—'||co.has(t)) return;
+        la[t]=la[t]||{so:0,cho:new Set()};
+        la[t].so++; la[t].cho.add(b);
+      });
+    });
+  });
+  return Object.entries(la).map(([t,v])=>({ten:t,so:v.so,bang:[...v.cho]}))
+    .sort((a,b)=>b.so-a.so);
+}
+function suaTenLechForm(){
+  if(!laLeader()){toast('Chỉ Leader làm được');return;}
+  const l=raTenLech();
+  openDrawer(`<div class="dr-code">Kiểm tra dữ liệu</div>
+    <div class="dr-title">Tên không khớp nhân sự</div>
+    <div class="dr-meta">Những tên đang ghi trong dữ liệu nhưng không còn ai trong phòng mang tên đó.
+      Thường do đã đổi tên mà chưa cập nhật.</div>
+    ${l.length?`
+      <div class="dr-lab">Tìm thấy ${l.length} tên lệch</div>
+      ${l.map((x,i)=>`<div class="lechrow">
+        <div class="lech-t"><b>${esc(x.ten)}</b>
+          <small>${x.so} chỗ · ${x.bang.join(', ')}</small></div>
+        <select class="fld" id="lech${i}">
+          <option value="">— bỏ qua —</option>
+          ${MEMBERS.map(m=>`<option value="${esc(m.name)}">đổi thành ${esc(m.name)}</option>`).join('')}
+        </select>
+      </div>`).join('')}
+      <button class="btn btn-pri btn-full" id="lechGo">${icon('i-loop')}Cập nhật</button>`
+    :`<div class="panel" style="margin-top:14px"><div class="empty">${icon('i-check')}<br><br>
+        Mọi tên trong dữ liệu đều khớp với nhân sự hiện có.</div></div>`}`);
+  const b=document.getElementById('lechGo');
+  if(b) b.onclick=async()=>{
+    b.disabled=true;
+    let tong=0;
+    for(let i=0;i<l.length;i++){
+      const moi=document.getElementById('lech'+i).value;
+      if(!moi) continue;
+      b.textContent='Đang đổi '+l[i].ten+'…';
+      const kq=await doiTenKhapNoi(l[i].ten,moi);
+      tong+=kq.xong;
+    }
+    await loadAll();
+    toast(tong?`Đã cập nhật ${tong} chỗ`:'Chưa chọn đổi tên nào');
+    closeDrawer();
+  };
+}
+
 /* ═══════ HỒ SƠ CÁ NHÂN ═══════ */
 function hoSoCuaToi(ten){
   const m=MEMBERS.find(x=>x.name===(ten||ME.name)); if(!m) return;
@@ -7686,10 +7815,30 @@ function hoSoCuaToi(ten){
       if(mail&&!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(mail)){toast('Email chưa đúng định dạng');return;}
       const tm=MEMBERS.find(x=>(x.email||'').toLowerCase()===mail&&x.id!==m.id);
       if(tm){toast('Email này đã dùng cho '+tm.name);return;}
+      const doiTen = ten!==m.name;
+      if(doiTen){
+        const n=demNoiGhiTen(m.name);
+        if(n && !confirm(
+          'Đổi tên "'+m.name+'" thành "'+ten+'"?\n\n'
+          +'Tên này đang được ghi ở '+n+' chỗ: bài đăng, đầu việc, báo cáo, kênh phụ trách…\n'
+          +'Hệ thống sẽ tự đổi hết cho khớp.\n\n'
+          +'Bấm OK để tiếp tục.')) return;
+      }
+      const b2=document.getElementById('hsSave');
+      if(b2) b2.disabled=true;
       const ok=await save('members',m.id,{name:ten,
         short_name:V('hsShort')||ten.split(' ').slice(-1)[0],
-        email:mail||null, avatar:val.value||null},'Đã lưu hồ sơ');
-      if(ok&&laToi&&ten!==ME.name){ ME=MEMBERS.find(x=>x.id===m.id)||ME; }
+        email:mail||null, avatar:val.value||null},
+        doiTen?'Đang đổi tên khắp hệ thống…':'Đã lưu hồ sơ');
+      if(ok&&doiTen){
+        const kq=await doiTenKhapNoi(m.name,ten);
+        await loadAll();
+        toast(kq.loi
+          ? `Đổi được ${kq.xong} chỗ, ${kq.loi} chỗ lỗi — xem Console`
+          : `Đã đổi tên và cập nhật ${kq.xong} chỗ liên quan`);
+      }
+      if(b2) b2.disabled=false;
+      if(ok&&laToi){ ME=MEMBERS.find(x=>x.id===m.id)||ME; await luuPhien(ME); }
     };
   }
   document.querySelectorAll('[data-hsgo]').forEach(b=>b.onclick=()=>{
@@ -7819,14 +7968,31 @@ function editMember(m){
     const trung=MEMBERS.find(x=>x.name.trim().toLowerCase()===ten.toLowerCase()&&(!m||x.id!==m.id));
     if(trung){toast('Đã có "'+trung.name+'" trong danh sách. Đặt tên khác đi nhé.');
       const el=document.getElementById('mbName'); if(el){el.focus();el.select();} return;}
+    if(m&&ten!==m.name){
+      const n=demNoiGhiTen(m.name);
+      if(n && !confirm('Đổi tên "'+m.name+'" thành "'+ten+'"?\n\n'
+        +'Tên đang được ghi ở '+n+' chỗ. Hệ thống sẽ tự đổi hết cho khớp.\n\n'
+        +'Bấm OK để tiếp tục.')) return;
+      globalThis.__doiTen=[m.name,ten];
+    }
     if(!V('mbRole')){toast('Chọn vị trí đã nhé');return;}
     const mgr=V('mbMgr'); const g=id=>document.getElementById(id).value;
     const row={name:V('mbName'),short_name:V('mbShort')||V('mbName').split(' ').slice(-1)[0],
       role:g('mbRole'),kind:g('mbKind'),desk:g('mbDesk')||null,dept:g('mbDept')||null,
       manager:mgr==='— Không —'?null:mgr,email:V('mbEmail')||null,pin:V('mbPin')||'0000',
       avatar:document.getElementById('avaVal').value||null};
-    if(isNew) await add('members',{...row,sort_order:MEMBERS.length+1,cap:100},'Đã thêm '+row.name);
-    else await save('members',m.id,row,'Đã lưu thay đổi');
+    if(isNew){ await add('members',{...row,sort_order:MEMBERS.length+1,cap:100},'Đã thêm '+row.name); }
+    else {
+      const dt=globalThis.__doiTen; globalThis.__doiTen=null;
+      const ok=await save('members',m.id,row,dt?'Đang đổi tên khắp hệ thống…':'Đã lưu thay đổi');
+      if(ok&&dt){
+        const kq=await doiTenKhapNoi(dt[0],dt[1]);
+        await loadAll();
+        toast(kq.loi?`Đổi được ${kq.xong} chỗ, ${kq.loi} lỗi — xem Console`
+          :`Đã đổi tên và cập nhật ${kq.xong} chỗ liên quan`);
+        if(dt[0]===ME.name){ ME=MEMBERS.find(x=>x.id===m.id)||ME; await luuPhien(ME); }
+      }
+    }
   };
   if(!isNew){
     const on=(i,f)=>{const e=document.getElementById(i);if(e)e.onclick=f;};
@@ -8095,14 +8261,52 @@ function openAlerts(){
 }
 
 /* ─── Khởi động ─── */
+
+/* ─── Mất kết nối thì âm thầm thử lại, có mạng lại thì tự vào ─── */
+let NOI_LAI=null;
+function tuNoiLai(){
+  if(NOI_LAI) return;
+  let lan=0;
+  NOI_LAI=setInterval(async()=>{
+    lan++;
+    if(lan>60){ clearInterval(NOI_LAI); NOI_LAI=null; return; }   /* thôi sau 10 phút */
+    try{
+      if(!THAT_SB) { clearInterval(NOI_LAI); NOI_LAI=null; return; }
+      const kq=await THAT_SB.from('members').select('id').limit(1);
+      if(!kq.error && kq.data && kq.data.length){
+        clearInterval(NOI_LAI); NOI_LAI=null;
+        console.log('Đã nối lại máy chủ — tải lại trang');
+        const c=document.getElementById('demoBanner');
+        if(c) c.innerHTML='<b>Đã nối lại được máy chủ.</b> Đang tải lại…';
+        setTimeout(()=>location.reload(),900);
+      }
+    }catch(e){}
+  }, 10000);
+}
+
 async function boot(){
-  let why='';
-  let {data,error}=await sb.from('members').select('*').order('sort_order');
+  let why='', data=null, error=null;
+
+  /* Thử lại vài lần — mạng chập chờn không nên rơi ngay vào chế độ xem thử */
+  const LAN=4, CHO=[0,700,1600,3000];
+  for(let i=0;i<LAN;i++){
+    if(CHO[i]) await new Promise(r=>setTimeout(r,CHO[i]));
+    if(i) console.log('Thử kết nối lại lần '+(i+1)+'/'+LAN+'…');
+    try{
+      const kq=await sb.from('members').select('*').order('sort_order');
+      data=kq.data; error=kq.error;
+    }catch(e){ error={message:e.message||'không gọi được máy chủ'}; }
+    if(!error && data && data.length) break;         /* xong */
+    /* khoá sai thì thử lại cũng vô ích */
+    if(error && /JWT|apikey|Invalid API/i.test(error.message||'')) break;
+  }
+
   if(error){
-    console.error('LỖI KẾT NỐI SUPABASE:', error);
+    console.error('LỖI KẾT NỐI SUPABASE sau '+LAN+' lần thử:', error);
     why = /JWT|apikey|Invalid/i.test(error.message||'')
       ? 'Chế độ xem thử — <b>khoá Supabase không hợp lệ</b>. Kiểm tra lại config.js.'
-      : 'Chế độ xem thử — lỗi kết nối: '+esc(error.message||'không rõ');
+      : 'Chế độ xem thử — không nối được máy chủ: '+esc(error.message||'không rõ')
+        +'. Kiểm tra mạng rồi tải lại trang.';
   } else if(!data||!data.length){
     console.error('Kết nối được nhưng bảng members trả về RỖNG. '
       +'Chạy file supabase/fix-quyen.sql trong Supabase SQL Editor.');
@@ -8110,7 +8314,10 @@ async function boot(){
       +'Chạy file <b>supabase/fix-quyen.sql</b> trong Supabase → SQL Editor.';
   }
   if(error||!data||!data.length){ DEMO_MODE=true; sb=demoClient(); DEMO_WHY=why;
-    ({data}=await sb.from('members').select('*').order('sort_order')); }
+    ({data}=await sb.from('members').select('*').order('sort_order'));
+    /* Không đụng vào phiên đăng nhập — mạng có thể chỉ trục trặc tạm thời */
+    tuNoiLai();
+  }
   MEMBERS=data||[];
   if(DEMO_MODE) showDemoBanner(whyDemo());
   apDungLogo();
