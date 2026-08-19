@@ -348,6 +348,34 @@ function setTheme(t){
 })();
 
 /* ─── Đăng nhập bằng email và mật khẩu ─── */
+
+/* ─── Giữ phiên đăng nhập, F5 không bị đá ra ─── */
+const PHIEN_NGAY=14;   /* nhớ 14 ngày */
+async function luuPhien(m){
+  try{
+    const sig=await bamMK('sess|'+m.id+'|'+(m.pw||m.pin||''));
+    localStorage.setItem('mktos_sess', JSON.stringify({
+      id:m.id, mail:(m.email||'').toLowerCase(), sig, at:Date.now() }));
+  }catch(e){ console.warn('Không lưu được phiên:',e); }
+}
+function xoaPhien(){
+  try{ localStorage.removeItem('mktos_sess'); }catch(e){}
+}
+async function docPhien(){
+  let p;
+  try{ p=JSON.parse(localStorage.getItem('mktos_sess')||'null'); }catch(e){ return null; }
+  if(!p||!p.id) return null;
+  /* quá hạn thì bỏ */
+  if(Date.now()-(p.at||0) > PHIEN_NGAY*864e5){ xoaPhien(); return null; }
+  const m=MEMBERS.find(x=>x.id===p.id)
+    || MEMBERS.find(x=>(x.email||'').toLowerCase()===p.mail);
+  if(!m){ xoaPhien(); return null; }
+  /* mật khẩu đổi rồi thì phiên hết hiệu lực */
+  const sig=await bamMK('sess|'+m.id+'|'+(m.pw||m.pin||''));
+  if(sig && p.sig && sig!==p.sig){ xoaPhien(); return null; }
+  return m;
+}
+
 const MUOI='kitachi-mkt-os-v2';
 async function bamMK(mk){
   try{
@@ -390,7 +418,8 @@ async function doLogin(){
   if(cachCu) setTimeout(()=>toast('Bạn vừa vào bằng mã PIN cũ — nên đặt mật khẩu mới'),900);
   baoLoiDN('');
   ME=m;
-  try{ localStorage.setItem('mktos_mail', mail); }catch(e){}
+  await luuPhien(m);
+  try{ localStorage.setItem('mktos_mail', (m.email||'').toLowerCase()); }catch(e){}
   await vaoApp(m);
   if(m.pw_reset) setTimeout(()=>doiMatKhau(true), 600);
 }
@@ -412,7 +441,7 @@ async function vaoApp(m){
   setTimeout(showNhac, 450);
 }
 document.getElementById('logout').onclick=()=>{
-  try{ localStorage.removeItem('mktos_mail'); }catch(e){}
+  xoaPhien();
   location.reload();
 };
 
@@ -446,7 +475,7 @@ function doiMatKhau(batBuoc){
     if(moi.length<6){toast('Mật khẩu mới phải từ 6 ký tự trở lên');return;}
     if(moi!==lai){toast('Hai lần gõ chưa khớp nhau');return;}
     const ok=await save('members',ME.id,{pw:await bamMK(moi),pw_reset:null},'Đã đổi mật khẩu');
-    if(ok) ME=MEMBERS.find(x=>x.id===ME.id)||ME;
+    if(ok){ ME=MEMBERS.find(x=>x.id===ME.id)||ME; await luuPhien(ME); }
   };
 }
 
@@ -7799,6 +7828,10 @@ async function boot(){
   MEMBERS=data||[];
   if(DEMO_MODE) showDemoBanner(whyDemo());
   apDungLogo();
+
+  /* Còn phiên thì vào thẳng, khỏi đăng nhập lại */
+  const cu=await docPhien();
+  if(cu){ await vaoApp(cu); return; }
   /* nhớ email lần trước */
   try{ const m=localStorage.getItem('mktos_mail');
     if(m){ const e=document.getElementById('lgEmail'); if(e) e.value=m; }
