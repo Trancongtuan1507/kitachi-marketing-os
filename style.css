@@ -2172,7 +2172,6 @@ html[data-theme="dark"] .c2-tag.mute{background:var(--soft)}
   .b2-act .brow-acts .actbtn{width:auto;flex:1 1 auto}
 }
 
-}
 /* Panel trong lưới 2 cột: chừa chỗ cho dòng bài xếp dọc */
 .grid2>.panel{min-width:0}
 .grid2 .brow2 .b2-t{-webkit-line-clamp:2}
@@ -2482,6 +2481,34 @@ html[data-theme="dark"] .lgin{background:var(--soft);border-color:var(--line2)}
 .gsbar.xong .gs-t b{color:var(--green)}
 .gs-t small{display:block;font-size:11.5px;color:var(--ink2);margin-top:2px;opacity:.9}
 .gsbar.xong .actbtn{background:var(--green);box-shadow:0 2px 10px rgba(62,155,122,.28)}
+.gsbar .gs-all{background:transparent;color:var(--blue);
+  border:1px solid rgba(70,110,190,.35);box-shadow:none}
+.gsbar.xong .gs-all{color:var(--green);border-color:rgba(62,155,122,.35);background:transparent}
+
+/* ── Xem trước trước khi đẩy sang TASK LIST ── */
+.gspv-load{display:flex;align-items:center;gap:9px;padding:18px 4px;
+  font-size:12.5px;color:var(--ink3)}
+.gspv-load .ic{width:15px;height:15px}
+.gspv-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;
+  margin:14px 0 9px;flex-wrap:wrap}
+.gspv-head b{font-size:13px;color:var(--ink)}
+.gspv-head small{font-size:11px;color:var(--ink3)}
+.gspv{display:flex;flex-direction:column;gap:7px;max-height:44vh;overflow-y:auto;
+  padding:3px;margin:0 -3px}
+.gspv-r{display:flex;gap:9px;align-items:flex-start;background:var(--soft);
+  border:1px solid var(--line);border-radius:12px;padding:9px 11px}
+.gspv-r.off{opacity:.4}
+.gspv-b{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px}
+.gspv-b .gsv{font-size:12.5px;padding:6px 9px}
+.gspv-m{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.gspv-m .fld{width:auto;flex:1 1 116px;min-width:0;font-size:11.5px;padding:5px 7px}
+.gspv-w{display:flex;align-items:center;gap:5px;flex:0 0 auto}
+.gspv-w .ava{width:20px;height:20px;font-size:9px}
+.gspv-w small{font-size:11px;color:var(--ink2);font-weight:600}
+@media(max-width:700px){
+  .gspv{max-height:38vh}
+  .gspv-m .fld{flex:1 1 100%}
+}
 .codebox{position:relative;background:var(--soft);border-radius:12px;padding:13px;
   border:1px solid var(--line)}
 .codebox pre{margin:0;font-size:10.5px;line-height:1.55;color:var(--ink2);

@@ -4012,6 +4012,7 @@ function viewReports(){
         <span class="stat-i">${icon(ic)}</span><span class="stat-v">${n}</span>
         <span class="stat-t">${t}</span></div>`).join('')}
   </div>
+  ${daiDongBo(day)}
   <div class="tabs">
     <button data-rtab="day" class="${RTAB==='day'?'on':''}">${icon('i-cal')}Báo cáo ngày</button>
     <button data-rtab="review" class="${RTAB==='review'?'on':''}">${icon('i-check')}Chờ tôi duyệt (${toReview.length})</button>
@@ -4055,17 +4056,19 @@ function openReport(id){
 /* ═══════ TỰ TỔNG HỢP VIỆC ĐÃ LÀM TRONG NGÀY ═══════ */
 function viecTrongNgay(who,day){
   const L=[];
-  const add=(t,src)=>{ if(t&&!L.some(x=>x.t===t)) L.push({t,src}); };
+  const add=(t,src,x)=>{ if(t&&!L.some(y=>y.t===t)) L.push(Object.assign({t,src},x||{})); };
 
   /* 1. Đầu việc hoàn thành, hạn rơi vào hôm đó */
   TASKS.filter(t=>(t.owner||'').includes(who)&&tgrp(t)==='Hoàn thành'
       &&(t.done_at?t.done_at===day:t.due===day))
-    .forEach(t=>add(t.name+' — đã xong','Đầu việc'));
+    .forEach(t=>add(t.name+' — đã xong','Đầu việc',
+      {pri:t.priority, tsrc:t.source, giao:t.assigner}));
 
   /* Việc đang làm dở hôm nay cũng nên ghi nhận */
   TASKS.filter(t=>(t.owner||'').includes(who)&&t.status==='Đang làm'
       &&t.started_at===day)
-    .forEach(t=>add(t.name+' — đang làm','Đầu việc'));
+    .forEach(t=>add(t.name+' — đang làm','Đầu việc',
+      {pri:t.priority, tsrc:t.source, giao:t.assigner, chuaXong:true}));
 
   /* 2. Bài đăng lên sóng hôm đó */
   POSTS.filter(p=>p.writer===who&&p.status==='Đã đăng'&&p.pub_date===day)
@@ -6243,8 +6246,8 @@ function bindAll(){
   if(b('setCa')) b('setCa').onclick=()=>caForm();
   if(b('setGs')) b('setGs').onclick=()=>gsheetForm();
   if(b('gsSet')) b('gsSet').onclick=()=>gsheetForm();
-  if(b('gsGo'))  b('gsGo').onclick=()=>dongBoSheet(null,'gsGoT');
-  if(b('gsGo2')) b('gsGo2').onclick=()=>dongBoSheet(null,'gsGoT2');
+  if(b('gsGo'))    b('gsGo').onclick=()=>dongBoSheet(RDAY||iso(D0()), ME.name);
+  if(b('gsGoAll')) b('gsGoAll').onclick=()=>dongBoSheet(RDAY||iso(D0()), null);
   if(b('caBar')) b('caBar').onclick=()=>{ if(laLeader()) caForm(); };
   if(b('slNow')) b('slNow').onclick=()=>saoLuuNgay('slNowT');
   if(b('slBack')) b('slBack').onclick=()=>phucHoiForm();
@@ -7456,84 +7459,231 @@ function logoForm(){
 
 
 
-/* ═══════ ĐỒNG BỘ GOOGLE SHEET ═══════ */
-/* Gom việc đã hoàn thành trong ngày của cả phòng */
-function duLieuDongBo(ngay){
-  const d=ngay||iso(D0());
-  const rows=[];
-  MEMBERS.forEach(m=>{
-    viecTrongNgay(m.name,d).forEach(v=>{
-      rows.push({ ngay:d, nguoi:m.name, vai:m.role,
-        nguon:v.src, viec:v.t, ghi_chu:'' });
+/* ═══════ ĐỒNG BỘ SANG FILE TASK LIST ═══════ */
+
+/* Bảng quy đổi từ cách gọi trong app sang cách gọi trong file TASK LIST.
+   Sheet luôn là bên đúng — mã Apps Script sẽ nắn lại nếu lệch chữ. */
+const GS_UUTIEN = {'Cao':'Khẩn cấp','Trung bình':'Trung bình','Thấp':'Thấp'};
+const GS_PL_TASK = {'Kế hoạch':'Dự án','Phát sinh':'Phát sinh','Tự đề xuất':'Cải tiến',
+  'BGĐ chỉ đạo':'Phát sinh','Khách yêu cầu':'Phát sinh'};
+const GS_PL_SRC = {'Đầu việc':'Dự án','Bài đăng':'Hàng ngày','Thiết kế':'Hàng ngày',
+  'Quay video':'Hàng ngày','Bàn giao':'Hàng ngày','Duyệt':'Hàng ngày'};
+const GS_GIAO = {'BGĐ chỉ đạo':'BGĐ - Sếp Chí','Khách yêu cầu':'Liên phòng ban'};
+/* STATUS trong sheet chỉ có đúng hai giá trị này */
+const GS_XONG = 'Hoàn thành', GS_CHUA = 'Chưa hoàn thành';
+/* Báo cáo ở trạng thái nào thì được đẩy sang sheet */
+const gsCong = () => (SET.gsheet_gate||'nop')==='duyet' ? ['Đã duyệt'] : ['Chờ duyệt','Đã duyệt'];
+
+/* Mã nhận dạng một việc — để sheet biết dòng nào đã ghi rồi */
+const maViec = s => { let h=5381; for(let i=0;i<s.length;i++) h=((h<<5)+h+s.charCodeAt(i))>>>0;
+  return h.toString(36); };
+
+let GS_DS = null;    /* danh sách dropdown đọc được từ sheet */
+
+/* Gom việc để đẩy sang sheet.
+   Mặc định chỉ lấy báo cáo ĐÃ DUYỆT — chưa duyệt thì chưa phải việc chốt. */
+function duLieuDongBo(ngay, ai){
+  const d = ngay||iso(D0());
+  const cong = gsCong();
+  const out = [];
+  REPORTS.filter(r=>r.date===d && cong.includes(r.status)
+      && (!ai || r.author===ai))
+    .forEach(r=>{
+      const mb = MEMBERS.find(m=>m.name===r.author)||{};
+      const meta = {}; viecTrongNgay(r.author,d).forEach(v=>meta[v.t]=v);
+      (r.items||[]).forEach(it=>{
+        const v = meta[it]||{};
+        out.push({
+          ma:       maViec(d+'|'+r.author+'|'+it),
+          ngay:     d,
+          viec:     it,
+          uutien:   GS_UUTIEN[v.pri] || 'Trung bình',
+          phanloai: GS_PL_TASK[v.tsrc] || GS_PL_SRC[v.src] || 'Hàng ngày',
+          giao:     GS_GIAO[v.tsrc] || 'Trưởng Bộ phận',
+          status:   v.chuaXong ? GS_CHUA : GS_XONG,
+          nguon:    mb.email || '',
+          note:     '',
+          _nguoi:   r.author,
+          _src:     v.src || 'Ghi tay'
+        });
+      });
     });
-  });
-  /* Báo cáo ngày đã nộp — lấy phần vướng mắc và kế hoạch */
-  REPORTS.filter(r=>r.date===d).forEach(r=>{
-    (r.items||[]).forEach(it=>{
-      if(rows.some(x=>x.nguoi===r.author&&x.viec===it)) return;   /* đã có rồi */
-      rows.push({ ngay:d, nguoi:r.author,
-        vai:(MEMBERS.find(m=>m.name===r.author)||{}).role||'',
-        nguon:'Báo cáo', viec:it, ghi_chu:'' });
-    });
-    if(r.blocker) rows.push({ ngay:d, nguoi:r.author,
-      vai:(MEMBERS.find(m=>m.name===r.author)||{}).role||'',
-      nguon:'Vướng mắc', viec:r.blocker, ghi_chu:'' });
-  });
-  return rows;
+  return out;
 }
 
-async function dongBoSheet(ngay,nutId){
-  const url=SET.gsheet_url||'';
-  if(!url){ toast('Chưa cài link Google Sheet'); gsheetForm(); return; }
-  const d=ngay||iso(D0());
-  const rows=duLieuDongBo(d);
-  if(!rows.length){ toast('Hôm nay chưa có việc nào hoàn thành để đồng bộ'); return; }
-  const b=nutId?document.getElementById(nutId):null;
-  const chuCu=b?b.textContent:'';
-  if(b){ b.disabled=true; b.textContent='Đang gửi…'; }
-  try{
-    /* text/plain để trình duyệt không hỏi trước — Apps Script nhận được */
-    const res=await fetch(url,{ method:'POST', mode:'cors',
-      headers:{'Content-Type':'text/plain;charset=utf-8'},
-      body:JSON.stringify({ khoa:SET.gsheet_key||'', ngay:d, rows }) });
-    const txt=await res.text();
-    let kq={}; try{ kq=JSON.parse(txt); }catch(e){ kq={ok:false,loi:txt.slice(0,120)}; }
-    if(kq.ok){
-      try{ localStorage.setItem('mktos_gs_luc',String(Date.now()));
-        localStorage.setItem('mktos_gs_ngay',d); }catch(e){}
-      toast(`Đã đồng bộ ${kq.them||rows.length} dòng sang Google Sheet`);
-      render();
-    } else {
-      toast('Sheet báo lỗi: '+(kq.loi||'không rõ'));
-      console.error('Google Sheet trả về:',txt);
-    }
-  }catch(e){
-    console.error('Lỗi gửi sang Google Sheet:',e);
-    toast('Không gửi được — kiểm tra link và quyền chia sẻ của Apps Script');
+const soChoDongBo = (ngay,ai) => duLieuDongBo(ngay,ai).length;
+
+/* Gọi sang Apps Script */
+async function goiSheet(payload){
+  const url = SET.gsheet_url||'';
+  if(!url) throw new Error('Chưa cài đường dẫn Google Sheet');
+  const res = await fetch(url,{ method:'POST', mode:'cors',
+    headers:{'Content-Type':'text/plain;charset=utf-8'},
+    body:JSON.stringify(Object.assign({khoa:SET.gsheet_key||''},payload)) });
+  const t = await res.text();
+  try{ return JSON.parse(t); }catch(e){ return {ok:false,loi:t.slice(0,160)}; }
+}
+
+/* ── Màn xem trước rồi mới đẩy ── */
+async function dongBoSheet(ngay, ai){
+  if(!SET.gsheet_url){ toast('Chưa nối Google Sheet');
+    if(laLeader()) gsheetForm(); return; }
+  /* Ai cũng đẩy được việc của chính mình. Cả phòng thì chỉ Leader. */
+  if(ai && ai!==ME.name && !laLeader()){
+    toast('Bạn chỉ đẩy được việc của chính mình'); return; }
+  if(!ai && !laLeader()) ai = ME.name;
+  const d = ngay||RDAY||iso(D0());
+  const rows = duLieuDongBo(d, ai);
+  if(!rows.length){
+    const rp = REPORTS.find(r=>r.date===d && r.author===(ai||ME.name));
+    toast(!rp||rp.status==='Chưa nộp'
+      ? 'Chưa nộp báo cáo ngày này thì chưa có gì để đẩy'
+      : (rp.status==='Yêu cầu sửa'
+        ? 'Báo cáo đang bị yêu cầu sửa — sửa xong mới đẩy được'
+        : 'Việc của ngày này đã đẩy sang sheet hết rồi'));
+    return;
   }
-  if(b){ b.disabled=false; b.textContent=chuCu||'Đồng bộ hôm nay'; }
+  openDrawer(`<div class="dr-code">Đồng bộ ${fdate2(d)}${ai?' · '+esc(ai):' · cả phòng'}</div>
+    <div class="dr-title">Xem lại trước khi ghi vào TASK LIST</div>
+    <div class="dr-meta">Mỗi dòng dưới đây sẽ thành một dòng trong file của công ty.
+      Bỏ tick dòng nào không muốn đẩy.</div>
+    <div id="gsPv" class="gspv-load">${icon('i-loop')} Đang đọc danh sách lựa chọn từ sheet…</div>`);
+
+  if(!GS_DS){
+    const k = await goiSheet({ds:true}).catch(e=>({ok:false,loi:String(e)}));
+    if(k.ok&&k.ds) GS_DS=k.ds;
+    else { const e=document.getElementById('gsPv');
+      if(e) e.innerHTML=`<div class="permhint">${icon('i-alert')}<span>Không đọc được sheet:
+        ${esc(k.loi||'không rõ')}. Kiểm tra lại phần Kết nối.</span></div>`;
+      return; }
+  }
+  veBangDongBo(d, rows);
 }
 
+function veBangDongBo(d, rows){
+  const sel=(ds,gia,cls,idx)=>{
+    const co=(ds||[]).length;
+    if(!co) return `<input type="text" class="fld ${cls}" data-i="${idx}" value="${esc(gia)}">`;
+    const them=(ds.indexOf(gia)<0&&gia)?`<option selected>${esc(gia)}</option>`:'';
+    return `<select class="fld ${cls}" data-i="${idx}">${them}
+      ${ds.map(x=>`<option ${x===gia?'selected':''}>${esc(x)}</option>`).join('')}</select>`;
+  };
+  const e=document.getElementById('gsPv'); if(!e) return;
+  e.className='';
+  e.innerHTML = `
+    <div class="gspv-head"><b>${rows.length} dòng sẽ được chèn</b>
+      <small>vào trang “${esc(GS_DS.trang||'')}”, bắt đầu từ dòng ${(GS_DS.dongCuoi||0)+1}</small></div>
+    <div class="gspv">${rows.map((r,i)=>`
+      <div class="gspv-r" data-r="${i}">
+        <label class="rfck"><input type="checkbox" class="gsck" data-i="${i}" checked><span></span></label>
+        <div class="gspv-b">
+          <input type="text" class="fld gsv" data-i="${i}" value="${esc(r.viec)}">
+          <div class="gspv-m">
+            <span class="gspv-w">${avat(r._nguoi)}<small>${esc(r._nguoi)}</small></span>
+            ${sel(GS_DS.uutien,r.uutien,'gsu',i)}
+            ${sel(GS_DS.phanloai,r.phanloai,'gsp',i)}
+            ${sel(GS_DS.giao,r.giao,'gsg',i)}
+            ${sel(GS_DS.status,r.status,'gss',i)}
+          </div>
+        </div>
+      </div>`).join('')}</div>
+    <div class="dr-lab">Ghi chú chung <span style="font-weight:400;color:var(--ink3)">— vào cột Note/Mô tả</span></div>
+    <input type="text" id="gsNote" class="fld" placeholder="để trống cũng được">
+    <button class="btn btn-pri btn-full" id="gsPush">${icon('i-send')}Ghi ${rows.length} dòng vào TASK LIST</button>
+    <button class="btn btn-gh btn-full" id="gsForget" style="margin-top:8px">${icon('i-loop')}Đẩy lại ngày này từ đầu</button>
+    <small style="display:block;font-size:11px;color:var(--ink3);margin-top:8px;line-height:1.6">
+      Việc nào đã đẩy rồi thì sheet tự bỏ qua, bấm nhiều lần không bị trùng.
+      Nút “đẩy lại” chỉ xoá trí nhớ chống trùng, không xoá dòng nào trong sheet.</small>`;
+
+  document.querySelectorAll('.gsck').forEach(c=>c.onchange=()=>
+    c.closest('.gspv-r').classList.toggle('off',!c.checked));
+
+  document.getElementById('gsForget').onclick=async()=>{
+    const k=await goiSheet({quen:true,ngay:d}).catch(()=>({ok:false}));
+    toast(k.ok?'Đã xoá trí nhớ — bấm ghi lần nữa sẽ đẩy lại toàn bộ':'Không gọi được sheet');
+  };
+
+  document.getElementById('gsPush').onclick=async()=>{
+    const lay=(cls,i)=>{ const el=document.querySelector('.'+cls+'[data-i="'+i+'"]');
+      return el?el.value.trim():''; };
+    const ghiChu=V('gsNote')||'';
+    const gui=rows.map((r,i)=>({...r,
+        viec:lay('gsv',i), uutien:lay('gsu',i), phanloai:lay('gsp',i),
+        giao:lay('gsg',i), status:lay('gss',i), note:ghiChu}))
+      .filter((r,i)=>{ const c=document.querySelector('.gsck[data-i="'+i+'"]');
+        return c&&c.checked&&r.viec; });
+    if(!gui.length){ toast('Chưa chọn dòng nào'); return; }
+
+    const b=document.getElementById('gsPush');
+    b.disabled=true; b.textContent='Đang ghi…';
+    const k=await goiSheet({ngay:d,rows:gui}).catch(e=>({ok:false,loi:String(e)}));
+    b.disabled=false;
+    if(!k.ok){
+      b.innerHTML=icon('i-send')+'Thử lại';
+      toast('Sheet báo lỗi: '+(k.loi||'không rõ')); return;
+    }
+    await sb.from('settings').upsert({key:'gsheet_last',
+      value:JSON.stringify({ngay:d,so:k.them,luc:k.luc||'',boi:ME.name})});
+    toast(k.them
+      ? 'Đã ghi '+k.them+' dòng vào TASK LIST'+(k.bo?' · bỏ qua '+k.bo+' dòng đã có':'')
+      : 'Tất cả việc của ngày này đã có trong sheet rồi');
+    closeDrawer(); await loadAll();
+  };
+}
+
+/* Lần đồng bộ gần nhất — lưu ở settings nên cả phòng cùng thấy */
 function lanDongBoCuoi(){
-  let luc=0,ng='';
-  try{ luc=+(localStorage.getItem('mktos_gs_luc')||0);
-    ng=localStorage.getItem('mktos_gs_ngay')||''; }catch(e){}
-  if(!luc) return null;
-  return { ngay:ng, cach:Math.floor((Date.now()-luc)/864e5) };
+  try{ const v=SET.gsheet_last; if(!v) return null;
+    const o=typeof v==='string'?JSON.parse(v):v;
+    return o&&o.ngay?o:null;
+  }catch(e){ return null; }
+}
+
+/* ── Dải nhắc đồng bộ trên màn Báo cáo ngày · ai cũng thấy ── */
+function daiDongBo(day){
+  if(!SET.gsheet_url){
+    return laLeader() ? `<div class="gsbar">
+      <span class="gs-i">${icon('i-link')}</span>
+      <span class="gs-t"><b>Chưa nối với file TASK LIST</b>
+        <small>Nối một lần là cả phòng chỉ cần bấm một nút, khỏi điền tay</small></span>
+      <button class="actbtn" id="gsSet">${icon('i-link')}Kết nối</button></div>` : '';
+  }
+  const toi = soChoDongBo(day, ME.name);
+  const phong = laLeader() ? soChoDongBo(day) : 0;
+  const L = lanDongBoCuoi(), xong = L && L.ngay===day;
+  const rp = REPORTS.find(r=>r.date===day && r.author===ME.name);
+  const chuaNop = !rp || rp.status==='Chưa nộp';
+
+  let tit, sub;
+  if(toi){ tit = toi+' việc của bạn đang chờ ghi sang TASK LIST';
+    sub = 'Bấm là tự điền vào file công ty, đúng cột đúng tuần'; }
+  else if(chuaNop){ tit = 'Nộp báo cáo xong mới đồng bộ được';
+    sub = 'Việc bạn đã làm hôm nay sẽ tự nhảy sang TASK LIST'; }
+  else { tit = 'Việc của bạn đã đồng bộ xong';
+    sub = xong ? ('Lần gần nhất '+fdate2(L.ngay)+(L.luc?' lúc '+esc(L.luc):'')
+        +' · '+L.so+' dòng · '+esc(L.boi||'')) : 'Không còn dòng nào chờ đẩy'; }
+
+  return `<div class="gsbar ${toi?'':'xong'}">
+    <span class="gs-i">${icon(toi?'i-loop':'i-check')}</span>
+    <span class="gs-t"><b>${tit}</b><small>${sub}</small></span>
+    ${toi?`<button class="actbtn" id="gsGo">${icon('i-send')}Đồng bộ việc của tôi</button>`:''}
+    ${phong>toi?`<button class="actbtn gs-all" id="gsGoAll">${icon('i-users')}Cả phòng (${phong})</button>`:''}
+    ${(!toi&&!phong&&laLeader())?`<button class="actbtn" id="gsSet">${icon('i-pen')}Cài đặt</button>`:''}
+  </div>`;
 }
 
 /* Cấu hình link */
 function gsheetForm(){
   if(!laLeader()){toast('Chỉ Leader cài được');return;}
   openDrawer(`<div class="dr-code">Kết nối</div>
-    <div class="dr-title">Đồng bộ Google Sheet</div>
-    <div class="dr-meta">Mỗi ngày bấm một nút là việc đã hoàn thành của cả phòng
-      tự ghi sang bảng tính.</div>
+    <div class="dr-title">Nối với file TASK LIST</div>
+    <div class="dr-meta">Việc đã duyệt sẽ được chèn thành dòng mới ở cuối bảng,
+      giữ nguyên màu và dropdown như gõ tay.</div>
 
     <div class="notice" style="margin-top:12px">
       <span class="ni">${icon('i-alert')}</span>
       <span><b>Cần làm một lần duy nhất</b>
-        <p>Mở Google Sheet của bạn → menu <b>Tiện ích mở rộng</b> → <b>Apps Script</b>
+        <p>Mở <b>chính file TASK LIST</b> → menu <b>Tiện ích mở rộng</b> → <b>Apps Script</b>
         → xoá hết mã cũ → dán đoạn mã bên dưới → bấm <b>Triển khai</b> →
         <b>Tuỳ chọn triển khai mới</b> → chọn <b>Ứng dụng web</b> →
         mục <b>Người có quyền truy cập</b> chọn <b>Bất kỳ ai</b> → <b>Triển khai</b>.
@@ -7547,6 +7697,15 @@ function gsheetForm(){
     <input type="text" id="gsUrl" class="fld" value="${esc(SET.gsheet_url||'')}"
       placeholder="https://script.google.com/macros/s/..../exec">
 
+    <div class="dr-lab">Khi nào được đẩy sang sheet</div>
+    <select id="gsGate" class="fld">
+      <option value="nop" ${(SET.gsheet_gate||'nop')==='nop'?'selected':''}>Ngay khi nộp báo cáo — mỗi người tự bấm</option>
+      <option value="duyet" ${SET.gsheet_gate==='duyet'?'selected':''}>Chỉ sau khi quản lý duyệt báo cáo</option>
+    </select>
+    <small style="display:block;font-size:11px;color:var(--ink3);margin-top:5px;line-height:1.6">
+      Chọn cách trên thì nhanh, ai xong việc bấm luôn. Chọn cách dưới thì chặt hơn
+      nhưng phải chờ duyệt mới đẩy được.</small>
+
     <div class="dr-lab">Mã bảo vệ <span style="font-weight:400;color:var(--ink3)">— tuỳ chọn</span></div>
     <input type="text" id="gsKey" class="fld" value="${esc(SET.gsheet_key||'')}"
       placeholder="đặt một chuỗi bất kỳ, phải trùng với KHOA trong mã">
@@ -7554,10 +7713,11 @@ function gsheetForm(){
       Để trống cũng chạy được. Đặt mã này thì chỉ app của bạn ghi được vào sheet.</small>
 
     <div class="two" style="margin-top:16px">
-      <button class="btn btn-gh" id="gsTest">${icon('i-loop')}Gửi thử</button>
+      <button class="btn btn-gh" id="gsTest">${icon('i-loop')}Kiểm tra</button>
       <button class="btn btn-pri" id="gsSave">${icon('i-check')}Lưu</button>
     </div>
     <div id="gsKq"></div>`);
+
   document.getElementById('gsCopy').onclick=()=>{
     navigator.clipboard.writeText(MA_APPS_SCRIPT)
       .then(()=>toast('Đã sao chép — dán vào Apps Script'))
@@ -7569,29 +7729,35 @@ function gsheetForm(){
       toast('Đường dẫn phải có dạng script.google.com/macros/s/…/exec');return;}
     await sb.from('settings').upsert({key:'gsheet_url',value:u});
     await sb.from('settings').upsert({key:'gsheet_key',value:V('gsKey')||''});
+    await sb.from('settings').upsert({key:'gsheet_gate',value:V('gsGate')||'nop'});
+    GS_DS=null;
     toast('Đã lưu kết nối'); closeDrawer(); await loadAll();
   };
+  /* Kiểm tra: chỉ ĐỌC sheet, không ghi dòng thử nào vào file công ty */
   document.getElementById('gsTest').onclick=async()=>{
-    const u=V('gsUrl').trim();
-    const e=document.getElementById('gsKq');
+    const u=V('gsUrl').trim(), e=document.getElementById('gsKq');
     if(!u){ e.innerHTML=`<div class="permhint" style="margin-top:12px">${icon('i-alert')}
       <span>Dán đường dẫn vào đã nhé.</span></div>`; return; }
     e.innerHTML=`<div class="permhint" style="margin-top:12px">${icon('i-loop')}
-      <span>Đang gửi thử…</span></div>`;
+      <span>Đang đọc thử sheet…</span></div>`;
     try{
       const res=await fetch(u,{method:'POST',mode:'cors',
         headers:{'Content-Type':'text/plain;charset=utf-8'},
-        body:JSON.stringify({khoa:V('gsKey')||'',ngay:iso(D0()),thu:true,
-          rows:[{ngay:iso(D0()),nguoi:ME.name,vai:'thử kết nối',
-            nguon:'Kiểm tra',viec:'Dòng thử — xoá được',ghi_chu:''}]})});
+        body:JSON.stringify({khoa:V('gsKey')||'',ds:true})});
       const t=await res.text();
       let k={}; try{k=JSON.parse(t);}catch(x){k={ok:false,loi:t.slice(0,150)};}
-      e.innerHTML=k.ok
-        ? `<div class="notice" style="margin-top:12px"><span class="ni">${icon('i-check')}</span>
-            <span><b>Nối được rồi</b><p>Đã ghi thử một dòng vào sheet
-            ${k.sheet?'“'+esc(k.sheet)+'”':''}. Mở sheet kiểm tra rồi xoá dòng đó đi.</p></span></div>`
-        : `<div class="permhint" style="margin-top:12px">${icon('i-alert')}
-            <span>Sheet báo lỗi: ${esc(k.loi||'không rõ')}</span></div>`;
+      if(k.ok&&k.ds){
+        const d=k.ds, n=a=>(a&&a.length)?a.length+' lựa chọn':'<b style="color:var(--red)">không thấy dropdown</b>';
+        e.innerHTML=`<div class="notice" style="margin-top:12px"><span class="ni">${icon('i-check')}</span>
+          <span><b>Đọc được sheet rồi</b>
+            <p>Trang <b>${esc(d.trang||'')}</b>, đang có ${d.dongCuoi||0} dòng.<br>
+            Ưu tiên: ${n(d.uutien)} · Phân loại: ${n(d.phanloai)}<br>
+            Người giao: ${n(d.giao)} · Status: ${n(d.status)}<br>
+            Chưa ghi gì vào sheet cả — yên tâm.</p></span></div>`;
+      } else {
+        e.innerHTML=`<div class="permhint" style="margin-top:12px">${icon('i-alert')}
+          <span>Sheet báo lỗi: ${esc(k.loi||'không rõ')}</span></div>`;
+      }
     }catch(x){
       e.innerHTML=`<div class="permhint" style="margin-top:12px">${icon('i-alert')}
         <span>Không gọi được. Kiểm tra lại: đã <b>Triển khai</b> chưa,
@@ -7600,49 +7766,192 @@ function gsheetForm(){
   };
 }
 
-const MA_APPS_SCRIPT = `// Dán vào Apps Script của Google Sheet — Kiều Foods Marketing OS
-const KHOA = '';            // đặt trùng với "Mã bảo vệ" trong app, để trống cũng được
-const TEN_SHEET = 'Công việc hằng ngày';
+const MA_APPS_SCRIPT = `/* ═══════════════════════════════════════════════════════════
+   Kiều Foods · Marketing OS  →  file TASK LIST
+   Dán vào Apps Script CỦA CHÍNH FILE TASK LIST.
 
+   Nguyên tắc: chỉ CHÈN dòng mới xuống cuối bảng.
+   Không xoá, không sửa dòng ai đã nhập tay.
+   Dòng chèn ra kế thừa nguyên màu nền, viền và dropdown
+   của dòng liền trên nên nhìn không khác gì gõ tay.
+   ═══════════════════════════════════════════════════════════ */
+
+const KHOA        = '';                  // trùng "Mã bảo vệ" trong app, để trống cũng chạy
+const TEN_SHEET   = '';                  // để trống = trang đầu tiên của file
+const DONG_TIEU_DE = 4;                  // dòng chứa chữ WEEK / DATE / TASK
+const MUI_GIO     = 'Asia/Ho_Chi_Minh';
+
+/* Cột theo đúng file TASK LIST: B=2 … J=10 */
+const C = { week:2, date:3, task:4, uutien:5, phanloai:6, giao:7, status:8, nguon:9, note:10 };
+
+/* ── Cổng vào ── */
 function doPost(e) {
   try {
     const d = JSON.parse(e.postData.contents);
-    if (KHOA && d.khoa !== KHOA) return tra({ ok: false, loi: 'Sai mã bảo vệ' });
-
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
-    let sh = ss.getSheetByName(TEN_SHEET);
-    if (!sh) {
-      sh = ss.insertSheet(TEN_SHEET);
-      sh.appendRow(['Ngày', 'Người', 'Vai trò', 'Nguồn', 'Công việc', 'Ghi chú', 'Ghi lúc']);
-      sh.getRange(1, 1, 1, 7).setFontWeight('bold').setBackground('#EFEDFB');
-      sh.setFrozenRows(1);
-    }
-
-    // Xoá dòng cũ cùng ngày để không ghi trùng khi bấm nhiều lần
-    if (!d.thu) {
-      const v = sh.getDataRange().getValues();
-      for (let i = v.length - 1; i >= 1; i--) {
-        if (String(v[i][0]) === String(d.ngay)) sh.deleteRow(i + 1);
-      }
-    }
-
-    const luc = Utilities.formatDate(new Date(), 'Asia/Ho_Chi_Minh', 'dd/MM/yyyy HH:mm');
-    const rows = (d.rows || []).map(r =>
-      [r.ngay, r.nguoi, r.vai, r.nguon, r.viec, r.ghi_chu || '', luc]);
-    if (rows.length) sh.getRange(sh.getLastRow() + 1, 1, rows.length, 7).setValues(rows);
-
-    return tra({ ok: true, them: rows.length, sheet: TEN_SHEET });
+    if (KHOA && d.khoa !== KHOA) return tra_({ ok:false, loi:'Sai mã bảo vệ' });
+    if (d.ds)   return tra_({ ok:true, ds: danhSach_() });
+    if (d.quen) return tra_(quen_(d.ngay));
+    return tra_(ghi_(d));
   } catch (err) {
-    return tra({ ok: false, loi: String(err) });
+    return tra_({ ok:false, loi:String(err) });
   }
 }
 
-function doGet() { return tra({ ok: true, note: 'Cầu nối đang chạy' }); }
+function doGet() {
+  return tra_({ ok:true, note:'Cầu nối TASK LIST đang chạy' });
+}
 
-function tra(o) {
+/* ── Lấy trang ── */
+function trang_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sh = TEN_SHEET ? ss.getSheetByName(TEN_SHEET) : ss.getSheets()[0];
+  if (!sh) throw new Error('Không thấy trang "' + TEN_SHEET + '" trong file');
+  return sh;
+}
+
+/* ── Đọc danh sách dropdown thật trong sheet ──
+   App sẽ hiện đúng các lựa chọn này, khỏi lo gõ sai chữ. */
+function danhSach_() {
+  const sh = trang_();
+  const cuoi = sh.getLastRow();
+  const o = { trang: sh.getName(), dongCuoi: cuoi };
+  ['uutien','phanloai','giao','status','nguon'].forEach(function (k) {
+    o[k] = dsCot_(sh, cuoi, C[k]);
+  });
+  return o;
+}
+
+/* Dò ngược tối đa 40 dòng để tìm ô còn giữ data validation */
+function dsCot_(sh, dongCuoi, cot) {
+  const dung = Math.max(DONG_TIEU_DE + 1, dongCuoi - 40);
+  for (var i = dongCuoi; i >= dung; i--) {
+    var dv = sh.getRange(i, cot).getDataValidation();
+    if (!dv) continue;
+    var t = dv.getCriteriaType();
+    var v = dv.getCriteriaValues();
+    if (t === SpreadsheetApp.DataValidationCriteria.VALUE_IN_LIST) {
+      return v[0].map(function (x) { return String(x).trim(); }).filter(String);
+    }
+    if (t === SpreadsheetApp.DataValidationCriteria.VALUE_IN_RANGE) {
+      return v[0].getValues().map(function (x) { return String(x[0]).trim(); }).filter(String);
+    }
+  }
+  return [];
+}
+
+/* ── Ghi dữ liệu ── */
+function ghi_(d) {
+  const sh = trang_();
+  const khoa = LockService.getDocumentLock();
+  khoa.waitLock(20000);                       // hai người bấm cùng lúc không đè nhau
+  try {
+    var rows = d.rows || [];
+    if (!rows.length) return { ok:true, them:0, bo:0, trang:sh.getName() };
+
+    /* Chống trùng: nhớ mã từng việc đã ghi, theo ngày */
+    var kho  = PropertiesService.getDocumentProperties();
+    var pkey = 'k_' + (d.ngay || 'x');
+    var da   = {};
+    try {
+      JSON.parse(kho.getProperty(pkey) || '[]').forEach(function (k) { da[k] = 1; });
+    } catch (e) {}
+
+    var moi = rows.filter(function (r) { return !da[r.ma]; });
+    var bo  = rows.length - moi.length;
+    if (!moi.length) {
+      return { ok:true, them:0, bo:bo, trang:sh.getName() };
+    }
+
+    var ds     = danhSach_();               // đọc dropdown TRƯỚC khi ghi
+    var cuoi   = sh.getLastRow();           // dòng cuối CÓ nội dung
+    var coData = cuoi > DONG_TIEU_DE;
+    var soCot  = C.note - C.week + 1;       // B..J
+
+    /* File đã kẻ sẵn rất nhiều dòng trống có đủ dropdown ở dưới.
+       Dùng luôn những dòng đó, hết mới chèn thêm. */
+    var trong = sh.getMaxRows() - cuoi;
+    if (trong < moi.length) sh.insertRowsAfter(sh.getMaxRows(), moi.length - trong);
+
+    /* Chép định dạng + dropdown của dòng dữ liệu cuối xuống, cột B..J,
+       để dòng mới trông y hệt dòng gõ tay */
+    if (coData) {
+      var nguon = sh.getRange(cuoi, C.week, 1, soCot);
+      var dich  = sh.getRange(cuoi + 1, C.week, moi.length, soCot);
+      nguon.copyTo(dich, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
+      nguon.copyTo(dich, SpreadsheetApp.CopyPasteType.PASTE_DATA_VALIDATION, false);
+      dich.clearContent();
+    }
+
+    var out = moi.map(function (r) {
+      var ng = ngayJS_(r.ngay);
+      return [
+        tinhTuan_(ng),
+        ng,
+        String(r.viec || ''),
+        chon_(ds.uutien,   r.uutien,   'Trung bình'),
+        chon_(ds.phanloai, r.phanloai, 'Hàng ngày'),
+        chon_(ds.giao,     r.giao,     'Trưởng Bộ phận'),
+        chon_(ds.status,   r.status,   'Hoàn thành'),
+        chon_(ds.nguon,    r.nguon,    ''),
+        String(r.note || '')
+      ];
+    });
+
+    sh.getRange(cuoi + 1, C.week, out.length, 9).setValues(out);
+    sh.getRange(cuoi + 1, C.date, out.length, 1).setNumberFormat('dd/MM/yyyy');
+
+    moi.forEach(function (r) { da[r.ma] = 1; });
+    kho.setProperty(pkey, JSON.stringify(Object.keys(da)));
+
+    return {
+      ok:    true,
+      them:  out.length,
+      bo:    bo,
+      tu:    cuoi + 1,
+      den:   cuoi + out.length,
+      trang: sh.getName(),
+      luc:   Utilities.formatDate(new Date(), MUI_GIO, 'HH:mm')
+    };
+  } finally {
+    khoa.releaseLock();
+  }
+}
+
+/* Xoá trí nhớ chống trùng của một ngày, để đẩy lại từ đầu */
+function quen_(ngay) {
+  PropertiesService.getDocumentProperties().deleteProperty('k_' + ngay);
+  return { ok:true, quen:ngay };
+}
+
+/* ── Giá trị phải khớp dropdown, sai chữ thì tự nắn về đúng ── */
+function chon_(ds, gia, mac) {
+  gia = String(gia == null ? '' : gia).trim();
+  if (!ds || !ds.length) return gia || mac || '';
+  if (ds.indexOf(gia) >= 0) return gia;
+  var g = gia.toLowerCase();
+  for (var i = 0; i < ds.length; i++) {
+    if (ds[i].toLowerCase() === g) return ds[i];
+  }
+  if (mac && ds.indexOf(mac) >= 0) return mac;
+  return gia || (mac || '');
+}
+
+/* ── Ngày ── */
+function ngayJS_(s) {
+  var m = String(s).match(/^(\\d{4})-(\\d{2})-(\\d{2})/);
+  return m ? new Date(+m[1], +m[2] - 1, +m[3]) : new Date();
+}
+
+/* ── Số tuần: mùng 1-7 = Tuần 1, 8-14 = Tuần 2, 15-21 = Tuần 3, 22-31 = Tuần 4/5 ── */
+function tinhTuan_(ngay) {
+  return 'Tuần ' + Math.ceil(ngay.getDate() / 7);
+}
+
+function tra_(o) {
   return ContentService.createTextOutput(JSON.stringify(o))
     .setMimeType(ContentService.MimeType.JSON);
-}`;
+}
+`;
 
 /* ═══════ CA LÀM VIỆC ═══════ */
 const CA_MAC_DINH={ sang_vao:'08:00', sang_ra:'12:00',
