@@ -1365,11 +1365,6 @@ function viewDash(){
         lateT.length?`${lateT.length} đầu việc quá hạn`:''}. Mở chuông nhắc việc ở thanh trên để xem đầy đủ.</p></span>
   </div>`:''}
 
-  <div class="panel-h" style="background:none;border:0;padding:2px 2px 9px">
-    <b style="font-size:14.5px">${icon('i-signal')} Hệ thống kênh</b>
-    <small>${CHANNELS.length} kênh · bấm để xem hồ sơ và toàn bộ bài</small></div>
-  <div class="chgrid2">${chcards}</div>
-
   <div class="g3col">
     <div>
       <div class="panel"><div class="panel-h"><b>${icon('i-hand')} Việc cần làm hôm nay</b>
@@ -1473,6 +1468,11 @@ function viewDash(){
             <span class="pct">${p}%</span></div>`;}).join('')}</div></div>
     </div>
   </div>
+
+  <div class="panel-h" style="background:none;border:0;padding:14px 2px 9px">
+    <b style="font-size:14.5px">${icon('i-signal')} Hệ thống kênh</b>
+    <small>${CHANNELS.length} kênh · bấm để xem hồ sơ và toàn bộ bài</small></div>
+  <div class="chgrid2">${chcards}</div>
 
   <div class="panel"><div class="panel-h"><b>${icon('i-loop')} Hoạt động gần đây</b></div>
     <div class="panel-b"><div class="acts">${recent.length?recent.map(a=>`<div class="act">
