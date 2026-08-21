@@ -742,6 +742,13 @@ async function taiLaiNgam(gap){
     const truoc=dauVet();
     await loadAll(true);
     const sau=dauVet();
+    /* So ra việc mới của riêng mình rồi báo ngay */
+    try{
+      const snapMoi=chupViec();
+      if(SNAP_VIEC){ const ev=sukienChoToi(SNAP_VIEC,snapMoi); if(ev.length) showBaoTin(ev); }
+      SNAP_VIEC=snapMoi;
+      capNhatChuong();
+    }catch(e){ console.warn('Báo tin lỗi:',e); }
     if(truoc!==sau){
       render();
       const chip=document.getElementById('liveChip');
@@ -753,6 +760,7 @@ async function taiLaiNgam(gap){
 }
 function batDauTuTaiLai(){
   batRealtime();                                    /* nhận tức thì nếu bật được */
+  try{ SNAP_VIEC=chupViec(); capNhatChuong(); batNhacLai(); }catch(e){}
   if(LIVE_TIMER) clearInterval(LIVE_TIMER);
   LIVE_TIMER=setInterval(()=>taiLaiNgam(), 10000);   /* dự phòng: 10 giây một lần */
   document.addEventListener('visibilitychange',()=>{
@@ -831,8 +839,10 @@ document.getElementById('quickAdd').onclick=()=>openCreate();
 document.getElementById('bellBtn').onclick=()=>{
   const k='mktos_nhac_'+ME.name+'_'+iso(D0());
   localStorage.removeItem(k);
+  try{ localStorage.removeItem('mktos_hoan_'+ME.name); }catch(e){}
   if(nhacViec()) showNhac(); else openAlerts();
 };
+document.getElementById('bellBtn').oncontextmenu=e=>{ e.preventDefault(); nhacForm(); };
 const openSide=()=>{document.getElementById('side').classList.add('open');
   document.getElementById('sideBg').classList.add('on');};
 const closeSide=()=>{document.getElementById('side').classList.remove('open');
@@ -4891,6 +4901,9 @@ function viewSetup(){
           <span class="setu"><input type="number" id="setLoad" class="fld" value="${SET.load_max||14}" ${ed?'':'disabled'}> việc/người</span></div>
         <div class="setrow"><span class="setl">Giờ đăng mặc định</span>
           <input type="time" id="setTime" class="fld" value="${SET.default_time||'19:30'}" ${ed?'':'disabled'}></div>
+        <div class="setrow"><span class="setl">Nhắc việc của riêng tôi</span>
+          <span class="setu"><button class="btn btn-gh btn-sm" id="setNhac">${
+            phutNhacLai()?'Mỗi '+conBaoLau(phutNhacLai()):'Đang tắt'}</button></span></div>
         <div class="setrow"><span class="setl">Đồng bộ Google Sheet</span>
           <span class="setu"><button class="btn btn-gh btn-sm" id="setGs">${
             SET.gsheet_url?'Đã nối · sửa':'Kết nối'}</button></span></div>
@@ -6245,6 +6258,7 @@ function bindAll(){
   if(b('setLogo')) b('setLogo').onclick=()=>logoForm();
   if(b('setCa')) b('setCa').onclick=()=>caForm();
   if(b('setGs')) b('setGs').onclick=()=>gsheetForm();
+  if(b('setNhac')) b('setNhac').onclick=()=>nhacForm();
   if(b('gsSet')) b('gsSet').onclick=()=>gsheetForm();
   if(b('gsGo'))    b('gsGo').onclick=()=>dongBoSheet(RDAY||iso(D0()), ME.name);
   if(b('gsGoAll')) b('gsGoAll').onclick=()=>dongBoSheet(RDAY||iso(D0()), null);
@@ -7727,6 +7741,9 @@ function gsheetForm(){
     const u=V('gsUrl').trim();
     if(u&&!/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec/.test(u)){
       toast('Đường dẫn phải có dạng script.google.com/macros/s/…/exec');return;}
+    const kh=V('gsKey');
+    if(kh&&(kh.length>40||/^https?:/i.test(kh)||/^AKfy/i.test(kh))){
+      toast('Ô Mã bảo vệ đang chứa đường dẫn — xoá trống ô đó đi nhé');return;}
     await sb.from('settings').upsert({key:'gsheet_url',value:u});
     await sb.from('settings').upsert({key:'gsheet_key',value:V('gsKey')||''});
     await sb.from('settings').upsert({key:'gsheet_gate',value:V('gsGate')||'nop'});
@@ -7743,16 +7760,32 @@ function gsheetForm(){
     try{
       const res=await fetch(u,{method:'POST',mode:'cors',
         headers:{'Content-Type':'text/plain;charset=utf-8'},
-        body:JSON.stringify({khoa:V('gsKey')||'',ds:true})});
+        body:JSON.stringify({khoa:V('gsKey')||'',trang:V('gsSheet')||'',ds:true})});
       const t=await res.text();
       let k={}; try{k=JSON.parse(t);}catch(x){k={ok:false,loi:t.slice(0,150)};}
       if(k.ok&&k.ds){
-        const d=k.ds, n=a=>(a&&a.length)?a.length+' lựa chọn':'<b style="color:var(--red)">không thấy dropdown</b>';
-        e.innerHTML=`<div class="notice" style="margin-top:12px"><span class="ni">${icon('i-check')}</span>
-          <span><b>Đọc được sheet rồi</b>
-            <p>Trang <b>${esc(d.trang||'')}</b>, đang có ${d.dongCuoi||0} dòng.<br>
-            Ưu tiên: ${n(d.uutien)} · Phân loại: ${n(d.phanloai)}<br>
-            Người giao: ${n(d.giao)} · Status: ${n(d.status)}<br>
+        const d=k.ds;
+        GS_DS=d;
+        /* đổ danh sách trang trong file vào ô chọn */
+        const sel=document.getElementById('gsSheet');
+        if(sel&&d.trangs&&d.trangs.length){
+          sel.innerHTML=`<option value="">Tự tìm trang có WEEK / DATE / TASK</option>`
+            +d.trangs.map(t=>`<option value="${esc(t)}" ${t===d.trang?'selected':''}>${esc(t)}</option>`).join('');
+        }
+        const n=a=>(a&&a.length)?a.length+' lựa chọn':'<b style="color:var(--red)">chưa thấy dropdown</b>';
+        const dung=(d.uutien||[]).length===3&&(d.phanloai||[]).length===8
+          &&(d.giao||[]).length===4&&(d.status||[]).length===2;
+        const thieu=(d.thieuCot||[]).length;
+        e.innerHTML=`<div class="${thieu||!dung?'permhint':'notice'}" style="margin-top:12px">
+          <span class="${thieu||!dung?'':'ni'}">${icon(thieu||!dung?'i-alert':'i-check')}</span>
+          <span><b>${thieu?'Sai trang rồi':(dung?'Đúng trang TASK LIST':'Đọc được nhưng số lựa chọn hơi lạ')}</b>
+            <p>Trang <b>${esc(d.trang||'')}</b> · tiêu đề ở dòng ${d.dongTieuDe||'?'} · ${d.dongCuoi||0} dòng.<br>
+            ${thieu?`Thiếu cột: <b>${esc((d.thieuCot||[]).join(', '))}</b>.
+              Chọn lại trang ở ô <b>Trang trong file</b> phía trên rồi bấm Kiểm tra lần nữa.`
+            :`Ưu tiên: ${n(d.uutien)} · Phân loại: ${n(d.phanloai)}<br>
+              Người giao: ${n(d.giao)} · Status: ${n(d.status)}<br>
+              ${dung?'Khớp đúng 3 / 8 / 4 / 2 — bấm Lưu là xong.'
+                   :'Đúng ra phải là 3 / 8 / 4 / 2. Kiểm tra lại xem có đúng trang không.'}`}<br>
             Chưa ghi gì vào sheet cả — yên tâm.</p></span></div>`;
       } else {
         e.innerHTML=`<div class="permhint" style="margin-top:12px">${icon('i-alert')}
@@ -7770,26 +7803,36 @@ const MA_APPS_SCRIPT = `/* ═════════════════�
    Kiều Foods · Marketing OS  →  file TASK LIST
    Dán vào Apps Script CỦA CHÍNH FILE TASK LIST.
 
-   Nguyên tắc: chỉ CHÈN dòng mới xuống cuối bảng.
+   Tự tìm trang có tiêu đề WEEK / DATE / TASK, tự dò vị trí từng cột.
+   Đổi trang hay xê dịch cột đều không cần sửa mã, không cần triển khai lại.
+
+   Nguyên tắc: chỉ GHI xuống dưới dòng cuối cùng đang có nội dung.
    Không xoá, không sửa dòng ai đã nhập tay.
-   Dòng chèn ra kế thừa nguyên màu nền, viền và dropdown
-   của dòng liền trên nên nhìn không khác gì gõ tay.
    ═══════════════════════════════════════════════════════════ */
 
-const KHOA        = '';                  // trùng "Mã bảo vệ" trong app, để trống cũng chạy
-const TEN_SHEET   = '';                  // để trống = trang đầu tiên của file
-const DONG_TIEU_DE = 4;                  // dòng chứa chữ WEEK / DATE / TASK
-const MUI_GIO     = 'Asia/Ho_Chi_Minh';
+const KHOA      = '';                    // trùng "Mã bảo vệ" trong app, để trống cũng chạy
+const TEN_SHEET = '';                    // để trống = tự tìm
+const MUI_GIO   = 'Asia/Ho_Chi_Minh';
 
-/* Cột theo đúng file TASK LIST: B=2 … J=10 */
-const C = { week:2, date:3, task:4, uutien:5, phanloai:6, giao:7, status:8, nguon:9, note:10 };
+/* Tên cột trong sheet — dò theo chữ đầu, không phân biệt hoa thường */
+const NHAN = [
+  ['week',     'WEEK'],
+  ['date',     'DATE'],
+  ['task',     'TASK'],
+  ['uutien',   'ƯU TIÊN'],
+  ['phanloai', 'PHÂN LOẠI'],
+  ['giao',     'NGƯỜI GIAO'],
+  ['status',   'STATUS'],
+  ['nguon',    'NGUỒN BÁO CÁO'],
+  ['note',     'NOTE']
+];
 
 /* ── Cổng vào ── */
 function doPost(e) {
   try {
     const d = JSON.parse(e.postData.contents);
     if (KHOA && d.khoa !== KHOA) return tra_({ ok:false, loi:'Sai mã bảo vệ' });
-    if (d.ds)   return tra_({ ok:true, ds: danhSach_() });
+    if (d.ds)   return tra_({ ok:true, ds: danhSach_(d.trang) });
     if (d.quen) return tra_(quen_(d.ngay));
     return tra_(ghi_(d));
   } catch (err) {
@@ -7801,29 +7844,81 @@ function doGet() {
   return tra_({ ok:true, note:'Cầu nối TASK LIST đang chạy' });
 }
 
-/* ── Lấy trang ── */
-function trang_() {
+/* ── Tìm trang TASK LIST ── */
+function trang_(ten) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sh = TEN_SHEET ? ss.getSheetByName(TEN_SHEET) : ss.getSheets()[0];
-  if (!sh) throw new Error('Không thấy trang "' + TEN_SHEET + '" trong file');
-  return sh;
+  const chon = ten || TEN_SHEET;
+  if (chon) {
+    const s = ss.getSheetByName(chon);
+    if (!s) throw new Error('Không thấy trang "' + chon + '" trong file');
+    return s;
+  }
+  const all = ss.getSheets();
+  for (var i = 0; i < all.length; i++) {
+    if (dongTieuDe_(all[i]) > 0) return all[i];
+  }
+  throw new Error('Không tìm thấy trang nào có tiêu đề WEEK / DATE / TASK');
 }
 
-/* ── Đọc danh sách dropdown thật trong sheet ──
-   App sẽ hiện đúng các lựa chọn này, khỏi lo gõ sai chữ. */
-function danhSach_() {
-  const sh = trang_();
-  const cuoi = sh.getLastRow();
-  const o = { trang: sh.getName(), dongCuoi: cuoi };
-  ['uutien','phanloai','giao','status','nguon'].forEach(function (k) {
-    o[k] = dsCot_(sh, cuoi, C[k]);
+/* Dòng tiêu đề nằm ở đâu — dò 15 dòng đầu */
+function dongTieuDe_(sh) {
+  const n = Math.min(15, sh.getLastRow());
+  if (n < 1) return 0;
+  const v = sh.getRange(1, 1, n, Math.min(15, sh.getMaxColumns())).getValues();
+  for (var i = 0; i < v.length; i++) {
+    var hang = v[i].map(function (x) {
+      return String(x).replace(/\\s+/g, ' ').trim().toUpperCase();
+    });
+    if (hang.indexOf('WEEK') >= 0 && hang.indexOf('TASK') >= 0) return i + 1;
+  }
+  return 0;
+}
+
+/* Cột nào là cột nào */
+function cot_(sh, dong) {
+  const v = sh.getRange(dong, 1, 1, sh.getMaxColumns()).getValues()[0];
+  const c = {};
+  for (var i = 0; i < v.length; i++) {
+    var t = String(v[i]).replace(/\\s+/g, ' ').trim().toUpperCase();
+    if (!t) continue;
+    for (var j = 0; j < NHAN.length; j++) {
+      var ten = NHAN[j][0];
+      if (!c[ten] && t.indexOf(NHAN[j][1]) === 0) { c[ten] = i + 1; break; }
+    }
+  }
+  return c;
+}
+
+/* Gom mọi thứ về một mối */
+function boCuc_(ten) {
+  const sh = trang_(ten);
+  const dong = dongTieuDe_(sh);
+  if (!dong) throw new Error('Trang "' + sh.getName() + '" không có dòng tiêu đề WEEK / DATE / TASK');
+  const c = cot_(sh, dong);
+  const thieu = NHAN.filter(function (n) { return !c[n[0]]; }).map(function (n) { return n[1]; });
+  return { sh: sh, dong: dong, c: c, thieu: thieu };
+}
+
+/* ── Đọc danh sách dropdown thật trong sheet ── */
+function danhSach_(ten) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const b  = boCuc_(ten);
+  const o  = {
+    trang:    b.sh.getName(),
+    trangs:   ss.getSheets().map(function (s) { return s.getName(); }),
+    dongTieuDe: b.dong,
+    dongCuoi: b.sh.getLastRow(),
+    thieuCot: b.thieu
+  };
+  ['uutien', 'phanloai', 'giao', 'status', 'nguon'].forEach(function (k) {
+    o[k] = b.c[k] ? dsCot_(b.sh, o.dongCuoi, b.c[k], b.dong) : [];
   });
   return o;
 }
 
 /* Dò ngược tối đa 40 dòng để tìm ô còn giữ data validation */
-function dsCot_(sh, dongCuoi, cot) {
-  const dung = Math.max(DONG_TIEU_DE + 1, dongCuoi - 40);
+function dsCot_(sh, dongCuoi, cot, dongTieuDe) {
+  const dung = Math.max(dongTieuDe + 1, dongCuoi - 40);
   for (var i = dongCuoi; i >= dung; i--) {
     var dv = sh.getRange(i, cot).getDataValidation();
     if (!dv) continue;
@@ -7841,9 +7936,13 @@ function dsCot_(sh, dongCuoi, cot) {
 
 /* ── Ghi dữ liệu ── */
 function ghi_(d) {
-  const sh = trang_();
+  const b  = boCuc_(d.trang);
+  const sh = b.sh, C = b.c;
+  if (b.thieu.length) {
+    return { ok:false, loi:'Trang "' + sh.getName() + '" thiếu cột: ' + b.thieu.join(', ') };
+  }
   const khoa = LockService.getDocumentLock();
-  khoa.waitLock(20000);                       // hai người bấm cùng lúc không đè nhau
+  khoa.waitLock(20000);                    // hai người bấm cùng lúc không đè nhau
   try {
     var rows = d.rows || [];
     if (!rows.length) return { ok:true, them:0, bo:0, trang:sh.getName() };
@@ -7858,63 +7957,68 @@ function ghi_(d) {
 
     var moi = rows.filter(function (r) { return !da[r.ma]; });
     var bo  = rows.length - moi.length;
-    if (!moi.length) {
-      return { ok:true, them:0, bo:bo, trang:sh.getName() };
-    }
+    if (!moi.length) return { ok:true, them:0, bo:bo, trang:sh.getName() };
 
-    var ds     = danhSach_();               // đọc dropdown TRƯỚC khi ghi
-    var cuoi   = sh.getLastRow();           // dòng cuối CÓ nội dung
-    var coData = cuoi > DONG_TIEU_DE;
-    var soCot  = C.note - C.week + 1;       // B..J
+    var ds     = danhSach_(d.trang);       // đọc dropdown TRƯỚC khi ghi
+    var cuoi   = sh.getLastRow();          // dòng cuối CÓ nội dung
+    var coData = cuoi > b.dong;
 
-    /* File đã kẻ sẵn rất nhiều dòng trống có đủ dropdown ở dưới.
+    /* File đã kẻ sẵn nhiều dòng trống có đủ dropdown ở dưới.
        Dùng luôn những dòng đó, hết mới chèn thêm. */
     var trong = sh.getMaxRows() - cuoi;
     if (trong < moi.length) sh.insertRowsAfter(sh.getMaxRows(), moi.length - trong);
 
-    /* Chép định dạng + dropdown của dòng dữ liệu cuối xuống, cột B..J,
+    /* Chép định dạng + dropdown của dòng dữ liệu cuối xuống,
        để dòng mới trông y hệt dòng gõ tay */
+    var traiPhai = viTri_(C);
     if (coData) {
-      var nguon = sh.getRange(cuoi, C.week, 1, soCot);
-      var dich  = sh.getRange(cuoi + 1, C.week, moi.length, soCot);
+      var soCot = traiPhai.phai - traiPhai.trai + 1;
+      var nguon = sh.getRange(cuoi, traiPhai.trai, 1, soCot);
+      var dich  = sh.getRange(cuoi + 1, traiPhai.trai, moi.length, soCot);
       nguon.copyTo(dich, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
       nguon.copyTo(dich, SpreadsheetApp.CopyPasteType.PASTE_DATA_VALIDATION, false);
       dich.clearContent();
     }
 
-    var out = moi.map(function (r) {
-      var ng = ngayJS_(r.ngay);
-      return [
-        tinhTuan_(ng),
-        ng,
-        String(r.viec || ''),
-        chon_(ds.uutien,   r.uutien,   'Trung bình'),
-        chon_(ds.phanloai, r.phanloai, 'Hàng ngày'),
-        chon_(ds.giao,     r.giao,     'Trưởng Bộ phận'),
-        chon_(ds.status,   r.status,   'Hoàn thành'),
-        chon_(ds.nguon,    r.nguon,    ''),
-        String(r.note || '')
-      ];
-    });
-
-    sh.getRange(cuoi + 1, C.week, out.length, 9).setValues(out);
-    sh.getRange(cuoi + 1, C.date, out.length, 1).setNumberFormat('dd/MM/yyyy');
+    /* Ghi từng cột theo đúng vị trí dò được */
+    var n = moi.length;
+    var ngayJS = moi.map(function (r) { return ngayJS_(r.ngay); });
+    dat_(sh, cuoi + 1, C.week,  ngayJS.map(function (x) { return [tinhTuan_(x)]; }));
+    dat_(sh, cuoi + 1, C.date,  ngayJS.map(function (x) { return [x]; }));
+    sh.getRange(cuoi + 1, C.date, n, 1).setNumberFormat('dd/MM/yyyy');
+    dat_(sh, cuoi + 1, C.task,     moi.map(function (r) { return [String(r.viec || '')]; }));
+    dat_(sh, cuoi + 1, C.uutien,   moi.map(function (r) { return [chon_(ds.uutien,   r.uutien,   'Trung bình')]; }));
+    dat_(sh, cuoi + 1, C.phanloai, moi.map(function (r) { return [chon_(ds.phanloai, r.phanloai, 'Hàng ngày')]; }));
+    dat_(sh, cuoi + 1, C.giao,     moi.map(function (r) { return [chon_(ds.giao,     r.giao,     'Trưởng Bộ phận')]; }));
+    dat_(sh, cuoi + 1, C.status,   moi.map(function (r) { return [chon_(ds.status,   r.status,   'Hoàn thành')]; }));
+    dat_(sh, cuoi + 1, C.nguon,    moi.map(function (r) { return [chon_(ds.nguon,    r.nguon,    '')]; }));
+    dat_(sh, cuoi + 1, C.note,     moi.map(function (r) { return [String(r.note || '')]; }));
 
     moi.forEach(function (r) { da[r.ma] = 1; });
     kho.setProperty(pkey, JSON.stringify(Object.keys(da)));
 
     return {
       ok:    true,
-      them:  out.length,
+      them:  n,
       bo:    bo,
       tu:    cuoi + 1,
-      den:   cuoi + out.length,
+      den:   cuoi + n,
       trang: sh.getName(),
       luc:   Utilities.formatDate(new Date(), MUI_GIO, 'HH:mm')
     };
   } finally {
     khoa.releaseLock();
   }
+}
+
+function dat_(sh, dong, cot, values) {
+  sh.getRange(dong, cot, values.length, 1).setValues(values);
+}
+
+function viTri_(C) {
+  var v = [];
+  for (var k in C) if (C[k]) v.push(C[k]);
+  return { trai: Math.min.apply(null, v), phai: Math.max.apply(null, v) };
 }
 
 /* Xoá trí nhớ chống trùng của một ngày, để đẩy lại từ đầu */
@@ -8820,6 +8924,339 @@ function nhacViec(){
       <button class="btn btn-pri" id="nhacOk">Bắt đầu làm việc</button>
     </div>
   </div>`;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   BÁO TIN TỨC THÌ · nhắc lặp lại
+   Có việc mới, có người duyệt, có việc tới hạn — hiện lên ngay,
+   không phải chờ mở app ngày hôm sau mới biết.
+   ═══════════════════════════════════════════════════════════ */
+
+let SNAP_VIEC = null;      /* ảnh chụp lần trước, để so ra cái gì đổi */
+let TIN_HIEN  = [];        /* các thẻ đang hiện trên màn hình */
+let NHAC_HEN  = null;      /* hẹn giờ nhắc lặp lại */
+
+/* ── Chụp lại trạng thái những thứ có thể sinh ra tin ── */
+function chupViec(){
+  const m = {};
+  (ALL_TASKS||[]).forEach(t => m['task:'+t.id] = {
+    ten:t.name, owner:t.owner||'', status:t.status, due:t.due,
+    assigner:t.assigner||'', by:t.updated_by||'', bo:!!t.archived });
+  (ALL_POSTS||[]).forEach(p => m['post:'+p.id] = {
+    ten:p.title, status:p.status, giu:holder(p)||'',
+    writer:p.writer||'', editor:p.editor||'', filmer:p.filmer||'',
+    by:p.updated_by||'', bo:!!p.archived });
+  (REPORTS||[]).forEach(r => m['report:'+r.id] = {
+    ten:'Báo cáo ngày '+fdate2(r.date), status:r.status,
+    author:r.author||'', reviewer:r.reviewer||'', by:r.updated_by||'' });
+  (APPROVALS||[]).forEach(a => m['apr:'+a.id] = {
+    ten:a.title, status:a.status, approver:a.approver||'',
+    requester:a.requester||'', by:a.updated_by||'' });
+  return m;
+}
+
+/* ── So hai ảnh chụp, lọc ra tin dành cho chính mình ── */
+function sukienChoToi(cu, moi){
+  if(!ME || !cu) return [];
+  const toi = ME.name, ra = [];
+  const cuaToi = s => (s||'').includes(toi);
+  const them = (lv,ic,t,s,key) => ra.push({lv,ic,t,s,key});
+
+  for(const key in moi){
+    const b = moi[key], a = cu[key];
+    if(b.by === toi) continue;                    /* mình tự sửa thì thôi */
+    if(b.bo) continue;                            /* đã bỏ vào lưu trữ */
+    const [loai] = key.split(':');
+
+    /* ── Đầu việc ── */
+    if(loai === 'task'){
+      const nhanMoi = cuaToi(b.owner) && (!a || !cuaToi(a.owner));
+      if(nhanMoi && b.assigner !== toi){
+        them('pri','i-inbox','Bạn được giao việc mới', b.ten
+          + (b.assigner ? ' · '+b.assigner+' giao' : '')
+          + (b.due ? ' · hạn '+fdate2(b.due) : ''), key);
+        continue;
+      }
+      if(a && cuaToi(b.owner)){
+        if(b.status !== a.status)
+          them('blue','i-loop','Việc của bạn đổi trạng thái',
+            b.ten+' → '+b.status+' · '+b.by, key);
+        else if(b.due !== a.due)
+          them('amber','i-cal','Việc của bạn bị dời hạn',
+            b.ten+' → '+fdate2(b.due)+' · '+b.by, key);
+      }
+      continue;
+    }
+
+    /* ── Bài đăng: đến lượt mình cầm ── */
+    if(loai === 'post'){
+      const denLuot = b.giu === toi && (!a || a.giu !== toi);
+      if(denLuot){
+        them('pri','i-hand','Đến lượt bạn xử lý',
+          b.ten+' · đang ở bước '+b.status, key);
+        continue;
+      }
+      const lienQuan = [b.writer,b.editor,b.filmer].includes(toi);
+      if(a && lienQuan && b.status !== a.status)
+        them('blue','i-loop','Bài của bạn đổi trạng thái',
+          b.ten+' → '+b.status+' · '+b.by, key);
+      continue;
+    }
+
+    /* ── Báo cáo ngày ── */
+    if(loai === 'report'){
+      if(b.reviewer === toi && b.status === 'Chờ duyệt'
+         && (!a || a.status !== 'Chờ duyệt'))
+        them('amber','i-check','Có báo cáo chờ bạn duyệt',
+          b.author+' vừa nộp '+b.ten.toLowerCase(), key);
+      else if(b.author === toi && a && b.status !== a.status){
+        if(b.status === 'Đã duyệt')
+          them('green','i-check','Báo cáo của bạn đã được duyệt',
+            b.by+' đã duyệt '+b.ten.toLowerCase(), key);
+        else if(b.status === 'Yêu cầu sửa')
+          them('red','i-alert','Báo cáo bị trả lại',
+            b.by+' yêu cầu sửa — mở ra xem nhận xét', key);
+      }
+      continue;
+    }
+
+    /* ── Phê duyệt ── */
+    if(loai === 'apr'){
+      if(b.approver === toi && b.status === 'Chờ duyệt'
+         && (!a || a.status !== 'Chờ duyệt'))
+        them('amber','i-check','Yêu cầu chờ bạn duyệt',
+          b.ten+' · '+b.requester+' gửi', key);
+      else if(b.requester === toi && a && b.status !== a.status)
+        them(b.status==='Đã duyệt'?'green':'red',
+          b.status==='Đã duyệt'?'i-check':'i-alert',
+          'Yêu cầu của bạn: '+b.status, b.ten+' · '+b.by, key);
+    }
+  }
+  return ra;
+}
+
+/* ── Hiện thẻ báo tin ở góc màn hình ── */
+function showBaoTin(ds){
+  if(!ds.length) return;
+  let hop = document.getElementById('tinBox');
+  if(!hop){
+    hop = document.createElement('div');
+    hop.id = 'tinBox'; hop.className = 'tinbox';
+    document.body.appendChild(hop);
+  }
+  ds.slice(0,5).forEach(t => {
+    /* cùng một việc thì không hiện hai thẻ */
+    if(TIN_HIEN.includes(t.key)) return;
+    TIN_HIEN.push(t.key);
+
+    const e = document.createElement('div');
+    e.className = 'tin '+t.lv;
+    e.innerHTML = `<span class="tin-i">${icon(t.ic)}</span>
+      <span class="tin-t"><b>${esc(t.t)}</b><small>${esc(t.s)}</small></span>
+      <button class="tin-x" aria-label="Đóng">${icon('i-x')}</button>`;
+
+    const dong = () => {
+      e.classList.add('di');
+      TIN_HIEN = TIN_HIEN.filter(k => k !== t.key);
+      setTimeout(() => e.remove(), 260);
+    };
+    e.querySelector('.tin-x').onclick = ev => { ev.stopPropagation(); dong(); };
+    e.onclick = () => { dong(); moTin(t.key); };
+
+    hop.appendChild(e);
+    requestAnimationFrame(() => e.classList.add('vao'));
+    setTimeout(dong, 16000);
+  });
+
+  /* Đang ở tab khác thì báo bằng thông báo của trình duyệt */
+  if(document.hidden) baoTrinhDuyet(ds);
+  capNhatChuong();
+}
+
+function moTin(key){
+  const [loai,id] = key.split(':');
+  if(loai==='task')   openTask(+id);
+  if(loai==='post')   openPost(+id);
+  if(loai==='report') openReport(+id);
+  if(loai==='apr')    openApr(+id);
+}
+
+/* ── Thông báo trình duyệt khi không mở tab ── */
+function baoTrinhDuyet(ds){
+  if(!('Notification' in window) || Notification.permission !== 'granted') return;
+  const t = ds[0];
+  const them = ds.length>1 ? ' (+'+(ds.length-1)+' tin nữa)' : '';
+  try{
+    const n = new Notification(t.t+them, { body:t.s, tag:'mktos', renotify:true });
+    n.onclick = () => { window.focus(); moTin(t.key); n.close(); };
+  }catch(e){}
+}
+
+async function xinQuyenBao(){
+  if(!('Notification' in window)){ toast('Trình duyệt này không hỗ trợ thông báo'); return; }
+  if(Notification.permission === 'granted'){ toast('Đã bật thông báo rồi'); return; }
+  if(Notification.permission === 'denied'){
+    toast('Trình duyệt đang chặn — bấm ổ khoá cạnh địa chỉ web để mở lại'); return; }
+  const kq = await Notification.requestPermission();
+  toast(kq==='granted' ? 'Đã bật — giờ tắt tab vẫn nhận được nhắc'
+                       : 'Bạn đã từ chối, bật lại ở ổ khoá cạnh địa chỉ web');
+  render();
+}
+
+/* ── Chấm đỏ trên chuông ── */
+function capNhatChuong(){
+  const dot = document.getElementById('bellDot');
+  if(!dot || !ME) return;
+  const n = soViecGap();
+  dot.style.display = n ? 'block' : 'none';
+}
+
+function soViecGap(){
+  if(!ME) return 0;
+  const td = iso(D0());
+  const myT = (TASKS||[]).filter(t => (t.owner||'').includes(ME.name)
+    && !['Hoàn thành','Không áp dụng'].includes(tgrp(t)));
+  const myP = (POSTS||[]).filter(p => !DONE.includes(p.status) && holds(p, ME.name));
+  return myT.filter(t => lateTask(t) || t.due === td).length
+       + myP.filter(p => latePost(p) || p.pub_date === td).length;
+}
+
+/* ── Nhắc lặp lại trong giờ làm ── */
+const NHAC_MAC_DINH = 90;                       /* phút */
+
+function phutNhacLai(){
+  const v = SET.nhac_lap;
+  return v === undefined || v === null || v === '' ? NHAC_MAC_DINH : (+v || 0);
+}
+
+function dangGioLam(){
+  const C = caLamViec(), d = new Date();
+  const t = d.getDay();
+  if(t === 0 && !C.cn) return false;
+  if(t === 6 && !C.thu7) return false;
+  const p = d.getHours()*60 + d.getMinutes();
+  return (p >= phutCua(C.sv) && p <= phutCua(C.sr))
+      || (p >= phutCua(C.cv) && p <= phutCua(C.cr));
+}
+
+function danHoan(){
+  try{ return +(localStorage.getItem('mktos_hoan_'+ME.name)||0); }catch(e){ return 0; }
+}
+function datHoan(phut){
+  try{ localStorage.setItem('mktos_hoan_'+ME.name, String(Date.now()+phut*60000)); }catch(e){}
+}
+
+function batNhacLai(){
+  if(NHAC_HEN) clearInterval(NHAC_HEN);
+  NHAC_HEN = setInterval(() => {
+    if(!ME) return;
+    if(!phutNhacLai()) return;                    /* người dùng đã tắt */
+    if(Date.now() < danHoan()) return;            /* đang hoãn */
+    if(!dangGioLam()) return;
+    if(document.getElementById('nhacBg')) return; /* popup đang mở */
+    if(!document.getElementById('drawer').classList.contains('hidden')) return;
+    if(!soViecGap()) return;
+    showNhacLai();
+  }, 60000);                                      /* dò mỗi phút */
+}
+
+function showNhacLai(){
+  const td = iso(D0());
+  const myT = TASKS.filter(t => (t.owner||'').includes(ME.name)
+    && !['Hoàn thành','Không áp dụng'].includes(tgrp(t)));
+  const myP = POSTS.filter(p => !DONE.includes(p.status) && holds(p, ME.name));
+  const qh = [...myT.filter(lateTask).map(t => ({k:'task',id:t.id,t:t.name,
+        s:'quá hạn '+Math.abs(dd(t.due))+' ngày'})),
+    ...myP.filter(latePost).map(p => ({k:'post',id:p.id,t:p.title,
+        s:'quá hạn '+Math.abs(dd(p.pub_date))+' ngày'}))];
+  const hn = [...myT.filter(t => t.due===td).map(t => ({k:'task',id:t.id,t:t.name,
+        s:esc(t.area||'')||'đến hạn hôm nay'})),
+    ...myP.filter(p => p.pub_date===td).map(p => ({k:'post',id:p.id,t:p.title,
+        s:esc(p.channel||'')||'đến hạn hôm nay'}))];
+  if(!qh.length && !hn.length) return;
+
+  const nhom = (lv,ic,tit,l) => l.length ? `<div class="nhac-g ${lv}">
+    <div class="ng-h"><span class="ng-i">${icon(ic)}</span>
+      <span class="ng-t"><b>${tit}</b></span><span class="ng-n">${l.length}</span></div>
+    <div class="ng-l">${l.slice(0,6).map(x => `
+      <button class="ng-i2" data-nhac="${x.k}:${x.id}"><span class="ng-dot"></span>
+        <span class="ng-x"><b>${esc(x.t)}</b><small>${x.s}</small></span>
+        ${icon('i-send')}</button>`).join('')}</div></div>` : '';
+
+  const wrap = document.createElement('div');
+  wrap.className = 'nhac-bg'; wrap.id = 'nhacBg';
+  wrap.innerHTML = `<div class="nhac">
+    <div class="nhac-h">
+      <div class="nhac-av">${avat(ME.name)}</div>
+      <div class="nhac-t"><b>Nhắc tiến độ</b>
+        <small>${qh.length ? `<b style="color:var(--red)">${qh.length} việc quá hạn</b>`
+          : `${hn.length} việc cần xong hôm nay`}</small></div>
+      <button class="nhac-x" id="nlX">${icon('i-x')}</button>
+    </div>
+    <div class="nhac-b">
+      ${nhom('red','i-alert','Đang quá hạn',qh)}
+      ${nhom('amber','i-clock','Đến hạn hôm nay',hn)}
+    </div>
+    <div class="nhac-f nhac-hoan">
+      <span class="nh-lab">Nhắc lại sau</span>
+      <button class="btn btn-gh btn-sm" data-hoan="30">30 phút</button>
+      <button class="btn btn-gh btn-sm" data-hoan="120">2 giờ</button>
+      <button class="btn btn-gh btn-sm" data-hoan="600">Hết hôm nay</button>
+      <button class="btn btn-pri" id="nlOk">Làm ngay</button>
+    </div>
+  </div>`;
+  document.body.appendChild(wrap);
+
+  const dong = () => wrap.remove();
+  wrap.querySelector('#nlX').onclick = () => { datHoan(30); dong(); };
+  wrap.querySelector('#nlOk').onclick = dong;
+  wrap.onclick = e => { if(e.target === wrap){ datHoan(30); dong(); } };
+  wrap.querySelectorAll('[data-hoan]').forEach(b => b.onclick = () => {
+    datHoan(+b.dataset.hoan);
+    toast('Sẽ nhắc lại sau '+(b.dataset.hoan==='600'?'hôm nay':conBaoLau(+b.dataset.hoan)));
+    dong();
+  });
+  wrap.querySelectorAll('[data-nhac]').forEach(b => b.onclick = () => {
+    const [k,i] = b.dataset.nhac.split(':');
+    dong(); k === 'post' ? openPost(+i) : openTask(+i);
+  });
+}
+
+/* ── Form cài đặt nhắc việc ── */
+function nhacForm(){
+  const p = phutNhacLai();
+  const quyen = ('Notification' in window) ? Notification.permission : 'khong';
+  openDrawer(`<div class="dr-code">Nhắc việc</div>
+    <div class="dr-title">Cách hệ thống nhắc bạn</div>
+    <div class="dr-meta">Cài riêng cho từng người. Đổi ở đây không ảnh hưởng ai khác.</div>
+
+    <div class="dr-lab">Nhắc lặp lại khi có việc quá hạn hoặc tới hạn</div>
+    <select id="nfLap" class="fld">
+      ${[[0,'Tắt — chỉ nhắc lúc mở app'],[30,'Mỗi 30 phút'],[60,'Mỗi 1 giờ'],
+         [90,'Mỗi 1 giờ 30 phút'],[180,'Mỗi 3 giờ']]
+        .map(([v,t]) => `<option value="${v}" ${p===v?'selected':''}>${t}</option>`).join('')}
+    </select>
+    <small style="display:block;font-size:11px;color:var(--ink3);margin-top:5px;line-height:1.6">
+      Chỉ nhắc trong giờ làm việc. Mỗi lần nhắc đều có nút hoãn.</small>
+
+    <div class="dr-lab">Thông báo khi không mở tab</div>
+    ${quyen==='granted'
+      ? `<div class="notice"><span class="ni">${icon('i-check')}</span>
+          <span><b>Đang bật</b><p>Có việc mới là trình duyệt báo, kể cả khi bạn
+          đang làm việc khác.</p></span></div>`
+      : quyen==='denied'
+      ? `<div class="permhint">${icon('i-alert')}<span>Trình duyệt đang chặn.
+          Bấm biểu tượng ổ khoá cạnh địa chỉ web → bật lại Thông báo.</span></div>`
+      : `<button class="btn btn-gh btn-full" id="nfXin">${icon('i-bell')}Bật thông báo trình duyệt</button>`}
+
+    <button class="btn btn-pri btn-full" id="nfSave" style="margin-top:14px">Lưu</button>`);
+
+  const x = document.getElementById('nfXin');
+  if(x) x.onclick = xinQuyenBao;
+  document.getElementById('nfSave').onclick = async () => {
+    await sb.from('settings').upsert({key:'nhac_lap', value:V('nfLap')});
+    toast('Đã lưu cách nhắc việc'); closeDrawer(); await loadAll();
+  };
 }
 
 function showNhac(){
