@@ -4888,6 +4888,9 @@ function viewSetup(){
           <span class="setu"><input type="number" id="setLoad" class="fld" value="${SET.load_max||14}" ${ed?'':'disabled'}> việc/người</span></div>
         <div class="setrow"><span class="setl">Giờ đăng mặc định</span>
           <input type="time" id="setTime" class="fld" value="${SET.default_time||'19:30'}" ${ed?'':'disabled'}></div>
+        <div class="setrow"><span class="setl">Đồng bộ Google Sheet</span>
+          <span class="setu"><button class="btn btn-gh btn-sm" id="setGs">${
+            SET.gsheet_url?'Đã nối · sửa':'Kết nối'}</button></span></div>
         <div class="setrow"><span class="setl">Giờ làm việc</span>
           <span class="setu"><button class="btn btn-gh btn-sm" id="setCa">Chỉnh giờ</button></span></div>
         <div class="setrow"><span class="setl">Logo &amp; tên thương hiệu</span>
@@ -6238,6 +6241,10 @@ function bindAll(){
   if(b('adRoles')) b('adRoles').onclick=()=>go('roles');
   if(b('setLogo')) b('setLogo').onclick=()=>logoForm();
   if(b('setCa')) b('setCa').onclick=()=>caForm();
+  if(b('setGs')) b('setGs').onclick=()=>gsheetForm();
+  if(b('gsSet')) b('gsSet').onclick=()=>gsheetForm();
+  if(b('gsGo'))  b('gsGo').onclick=()=>dongBoSheet(null,'gsGoT');
+  if(b('gsGo2')) b('gsGo2').onclick=()=>dongBoSheet(null,'gsGoT2');
   if(b('caBar')) b('caBar').onclick=()=>{ if(laLeader()) caForm(); };
   if(b('slNow')) b('slNow').onclick=()=>saoLuuNgay('slNowT');
   if(b('slBack')) b('slBack').onclick=()=>phucHoiForm();
@@ -7448,6 +7455,195 @@ function logoForm(){
 
 
 
+
+/* ═══════ ĐỒNG BỘ GOOGLE SHEET ═══════ */
+/* Gom việc đã hoàn thành trong ngày của cả phòng */
+function duLieuDongBo(ngay){
+  const d=ngay||iso(D0());
+  const rows=[];
+  MEMBERS.forEach(m=>{
+    viecTrongNgay(m.name,d).forEach(v=>{
+      rows.push({ ngay:d, nguoi:m.name, vai:m.role,
+        nguon:v.src, viec:v.t, ghi_chu:'' });
+    });
+  });
+  /* Báo cáo ngày đã nộp — lấy phần vướng mắc và kế hoạch */
+  REPORTS.filter(r=>r.date===d).forEach(r=>{
+    (r.items||[]).forEach(it=>{
+      if(rows.some(x=>x.nguoi===r.author&&x.viec===it)) return;   /* đã có rồi */
+      rows.push({ ngay:d, nguoi:r.author,
+        vai:(MEMBERS.find(m=>m.name===r.author)||{}).role||'',
+        nguon:'Báo cáo', viec:it, ghi_chu:'' });
+    });
+    if(r.blocker) rows.push({ ngay:d, nguoi:r.author,
+      vai:(MEMBERS.find(m=>m.name===r.author)||{}).role||'',
+      nguon:'Vướng mắc', viec:r.blocker, ghi_chu:'' });
+  });
+  return rows;
+}
+
+async function dongBoSheet(ngay,nutId){
+  const url=SET.gsheet_url||'';
+  if(!url){ toast('Chưa cài link Google Sheet'); gsheetForm(); return; }
+  const d=ngay||iso(D0());
+  const rows=duLieuDongBo(d);
+  if(!rows.length){ toast('Hôm nay chưa có việc nào hoàn thành để đồng bộ'); return; }
+  const b=nutId?document.getElementById(nutId):null;
+  const chuCu=b?b.textContent:'';
+  if(b){ b.disabled=true; b.textContent='Đang gửi…'; }
+  try{
+    /* text/plain để trình duyệt không hỏi trước — Apps Script nhận được */
+    const res=await fetch(url,{ method:'POST', mode:'cors',
+      headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body:JSON.stringify({ khoa:SET.gsheet_key||'', ngay:d, rows }) });
+    const txt=await res.text();
+    let kq={}; try{ kq=JSON.parse(txt); }catch(e){ kq={ok:false,loi:txt.slice(0,120)}; }
+    if(kq.ok){
+      try{ localStorage.setItem('mktos_gs_luc',String(Date.now()));
+        localStorage.setItem('mktos_gs_ngay',d); }catch(e){}
+      toast(`Đã đồng bộ ${kq.them||rows.length} dòng sang Google Sheet`);
+      render();
+    } else {
+      toast('Sheet báo lỗi: '+(kq.loi||'không rõ'));
+      console.error('Google Sheet trả về:',txt);
+    }
+  }catch(e){
+    console.error('Lỗi gửi sang Google Sheet:',e);
+    toast('Không gửi được — kiểm tra link và quyền chia sẻ của Apps Script');
+  }
+  if(b){ b.disabled=false; b.textContent=chuCu||'Đồng bộ hôm nay'; }
+}
+
+function lanDongBoCuoi(){
+  let luc=0,ng='';
+  try{ luc=+(localStorage.getItem('mktos_gs_luc')||0);
+    ng=localStorage.getItem('mktos_gs_ngay')||''; }catch(e){}
+  if(!luc) return null;
+  return { ngay:ng, cach:Math.floor((Date.now()-luc)/864e5) };
+}
+
+/* Cấu hình link */
+function gsheetForm(){
+  if(!laLeader()){toast('Chỉ Leader cài được');return;}
+  openDrawer(`<div class="dr-code">Kết nối</div>
+    <div class="dr-title">Đồng bộ Google Sheet</div>
+    <div class="dr-meta">Mỗi ngày bấm một nút là việc đã hoàn thành của cả phòng
+      tự ghi sang bảng tính.</div>
+
+    <div class="notice" style="margin-top:12px">
+      <span class="ni">${icon('i-alert')}</span>
+      <span><b>Cần làm một lần duy nhất</b>
+        <p>Mở Google Sheet của bạn → menu <b>Tiện ích mở rộng</b> → <b>Apps Script</b>
+        → xoá hết mã cũ → dán đoạn mã bên dưới → bấm <b>Triển khai</b> →
+        <b>Tuỳ chọn triển khai mới</b> → chọn <b>Ứng dụng web</b> →
+        mục <b>Người có quyền truy cập</b> chọn <b>Bất kỳ ai</b> → <b>Triển khai</b>.
+        Copy đường dẫn nhận được rồi dán vào ô bên dưới.</p></span></div>
+
+    <div class="dr-lab">Mã dán vào Apps Script</div>
+    <div class="codebox"><pre id="gsCode">${esc(MA_APPS_SCRIPT)}</pre>
+      <button class="btn btn-gh btn-sm" id="gsCopy">${icon('i-doc')}Sao chép mã</button></div>
+
+    <div class="dr-lab">Đường dẫn ứng dụng web</div>
+    <input type="text" id="gsUrl" class="fld" value="${esc(SET.gsheet_url||'')}"
+      placeholder="https://script.google.com/macros/s/..../exec">
+
+    <div class="dr-lab">Mã bảo vệ <span style="font-weight:400;color:var(--ink3)">— tuỳ chọn</span></div>
+    <input type="text" id="gsKey" class="fld" value="${esc(SET.gsheet_key||'')}"
+      placeholder="đặt một chuỗi bất kỳ, phải trùng với KHOA trong mã">
+    <small style="display:block;font-size:11px;color:var(--ink3);margin-top:5px;line-height:1.6">
+      Để trống cũng chạy được. Đặt mã này thì chỉ app của bạn ghi được vào sheet.</small>
+
+    <div class="two" style="margin-top:16px">
+      <button class="btn btn-gh" id="gsTest">${icon('i-loop')}Gửi thử</button>
+      <button class="btn btn-pri" id="gsSave">${icon('i-check')}Lưu</button>
+    </div>
+    <div id="gsKq"></div>`);
+  document.getElementById('gsCopy').onclick=()=>{
+    navigator.clipboard.writeText(MA_APPS_SCRIPT)
+      .then(()=>toast('Đã sao chép — dán vào Apps Script'))
+      .catch(()=>toast('Bôi đen đoạn mã rồi copy thủ công nhé'));
+  };
+  document.getElementById('gsSave').onclick=async()=>{
+    const u=V('gsUrl').trim();
+    if(u&&!/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec/.test(u)){
+      toast('Đường dẫn phải có dạng script.google.com/macros/s/…/exec');return;}
+    await sb.from('settings').upsert({key:'gsheet_url',value:u});
+    await sb.from('settings').upsert({key:'gsheet_key',value:V('gsKey')||''});
+    toast('Đã lưu kết nối'); closeDrawer(); await loadAll();
+  };
+  document.getElementById('gsTest').onclick=async()=>{
+    const u=V('gsUrl').trim();
+    const e=document.getElementById('gsKq');
+    if(!u){ e.innerHTML=`<div class="permhint" style="margin-top:12px">${icon('i-alert')}
+      <span>Dán đường dẫn vào đã nhé.</span></div>`; return; }
+    e.innerHTML=`<div class="permhint" style="margin-top:12px">${icon('i-loop')}
+      <span>Đang gửi thử…</span></div>`;
+    try{
+      const res=await fetch(u,{method:'POST',mode:'cors',
+        headers:{'Content-Type':'text/plain;charset=utf-8'},
+        body:JSON.stringify({khoa:V('gsKey')||'',ngay:iso(D0()),thu:true,
+          rows:[{ngay:iso(D0()),nguoi:ME.name,vai:'thử kết nối',
+            nguon:'Kiểm tra',viec:'Dòng thử — xoá được',ghi_chu:''}]})});
+      const t=await res.text();
+      let k={}; try{k=JSON.parse(t);}catch(x){k={ok:false,loi:t.slice(0,150)};}
+      e.innerHTML=k.ok
+        ? `<div class="notice" style="margin-top:12px"><span class="ni">${icon('i-check')}</span>
+            <span><b>Nối được rồi</b><p>Đã ghi thử một dòng vào sheet
+            ${k.sheet?'“'+esc(k.sheet)+'”':''}. Mở sheet kiểm tra rồi xoá dòng đó đi.</p></span></div>`
+        : `<div class="permhint" style="margin-top:12px">${icon('i-alert')}
+            <span>Sheet báo lỗi: ${esc(k.loi||'không rõ')}</span></div>`;
+    }catch(x){
+      e.innerHTML=`<div class="permhint" style="margin-top:12px">${icon('i-alert')}
+        <span>Không gọi được. Kiểm tra lại: đã <b>Triển khai</b> chưa,
+        mục <b>Người có quyền truy cập</b> đã chọn <b>Bất kỳ ai</b> chưa.</span></div>`;
+    }
+  };
+}
+
+const MA_APPS_SCRIPT = `// Dán vào Apps Script của Google Sheet — Kiều Foods Marketing OS
+const KHOA = '';            // đặt trùng với "Mã bảo vệ" trong app, để trống cũng được
+const TEN_SHEET = 'Công việc hằng ngày';
+
+function doPost(e) {
+  try {
+    const d = JSON.parse(e.postData.contents);
+    if (KHOA && d.khoa !== KHOA) return tra({ ok: false, loi: 'Sai mã bảo vệ' });
+
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    let sh = ss.getSheetByName(TEN_SHEET);
+    if (!sh) {
+      sh = ss.insertSheet(TEN_SHEET);
+      sh.appendRow(['Ngày', 'Người', 'Vai trò', 'Nguồn', 'Công việc', 'Ghi chú', 'Ghi lúc']);
+      sh.getRange(1, 1, 1, 7).setFontWeight('bold').setBackground('#EFEDFB');
+      sh.setFrozenRows(1);
+    }
+
+    // Xoá dòng cũ cùng ngày để không ghi trùng khi bấm nhiều lần
+    if (!d.thu) {
+      const v = sh.getDataRange().getValues();
+      for (let i = v.length - 1; i >= 1; i--) {
+        if (String(v[i][0]) === String(d.ngay)) sh.deleteRow(i + 1);
+      }
+    }
+
+    const luc = Utilities.formatDate(new Date(), 'Asia/Ho_Chi_Minh', 'dd/MM/yyyy HH:mm');
+    const rows = (d.rows || []).map(r =>
+      [r.ngay, r.nguoi, r.vai, r.nguon, r.viec, r.ghi_chu || '', luc]);
+    if (rows.length) sh.getRange(sh.getLastRow() + 1, 1, rows.length, 7).setValues(rows);
+
+    return tra({ ok: true, them: rows.length, sheet: TEN_SHEET });
+  } catch (err) {
+    return tra({ ok: false, loi: String(err) });
+  }
+}
+
+function doGet() { return tra({ ok: true, note: 'Cầu nối đang chạy' }); }
+
+function tra(o) {
+  return ContentService.createTextOutput(JSON.stringify(o))
+    .setMimeType(ContentService.MimeType.JSON);
+}`;
+
 /* ═══════ CA LÀM VIỆC ═══════ */
 const CA_MAC_DINH={ sang_vao:'08:00', sang_ra:'12:00',
   chieu_vao:'13:30', chieu_ra:'17:30', thu7:true, cn:false };
@@ -8246,6 +8442,19 @@ function nhacViec(){
        :'Đã '+c.ngay+' ngày chưa sao lưu',
      l:[{k:'goto',id:'admin',t:'Mở Quản trị để tải bản sao lưu',
        s:'Dọn dẹp & sao lưu → Tải bản sao lưu'}]});}
+
+  /* 4d. Nhắc đồng bộ Sheet */
+  if(laLeader()&&SET.gsheet_url){
+    const g=lanDongBoCuoi(), hn=iso(D0());
+    const sanSang=duLieuDongBo(hn).length;
+    const gioTanLam=phutCua(caLamViec().cr);
+    const bayGio=new Date().getHours()*60+new Date().getMinutes();
+    if(sanSang && (!g||g.ngay!==hn) && bayGio>=gioTanLam-60)
+      G.push({lv:'blue',ic:'i-share',t:'Chưa đồng bộ sang Google Sheet',
+        d:sanSang+' dòng việc hôm nay đang chờ gửi',
+        l:[{k:'goto',id:'reports',t:'Mở Báo cáo ngày để đồng bộ',
+          s:'Bấm nút Đồng bộ hôm nay ở đầu trang'}]});
+  }
 
   /* 5. Báo cáo ngày */
   const rp=REPORTS.find(r=>r.author===ME.name&&r.date===td);

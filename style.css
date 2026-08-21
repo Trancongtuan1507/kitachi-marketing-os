@@ -2468,3 +2468,28 @@ html[data-theme="dark"] .lgin{background:var(--soft);border-color:var(--line2)}
     border-top:1px solid var(--line)}
   .ca-now{margin-left:auto}
 }
+
+/* ══ Đồng bộ Google Sheet ══ */
+.gsbar{display:flex;align-items:center;gap:14px;background:var(--blue-s);border-radius:14px;
+  padding:13px 17px;margin-bottom:14px}
+.gsbar.xong{background:var(--green-s)}
+.gs-i{width:34px;height:34px;border-radius:11px;background:rgba(255,255,255,.7);
+  color:var(--blue);display:flex;align-items:center;justify-content:center;flex:0 0 34px}
+.gsbar.xong .gs-i{color:var(--green)}
+.gs-i .ic{width:17px;height:17px}
+.gs-t{flex:1;min-width:0}
+.gs-t b{display:block;font-size:13.5px;font-weight:700;color:var(--blue);line-height:1.35}
+.gsbar.xong .gs-t b{color:var(--green)}
+.gs-t small{display:block;font-size:11.5px;color:var(--ink2);margin-top:2px;opacity:.9}
+.gsbar.xong .actbtn{background:var(--green);box-shadow:0 2px 10px rgba(62,155,122,.28)}
+.codebox{position:relative;background:var(--soft);border-radius:12px;padding:13px;
+  border:1px solid var(--line)}
+.codebox pre{margin:0;font-size:10.5px;line-height:1.55;color:var(--ink2);
+  font-family:ui-monospace,'SF Mono',Menlo,monospace;white-space:pre-wrap;word-break:break-word;
+  max-height:200px;overflow-y:auto}
+.codebox .btn{margin-top:10px;width:100%}
+@media(max-width:700px){
+  .gsbar{flex-wrap:wrap}
+  .gs-t{flex:1 1 100%}
+  .gsbar .actbtn{width:100%;justify-content:center}
+}
